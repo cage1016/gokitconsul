@@ -1,0 +1,60 @@
+version: "3"
+
+volumes:
+  kong_data: {}
+
+networks:
+  gokitconsul_base_net:
+    driver: bridge
+
+services:
+  consul:
+    image: consul:1.5.1
+    container_name: gokitconsul-consul
+#    ports:
+#      - 8400:8400
+#      - 8500:8500
+#      - 8600:8600
+    networks:
+      - gokitconsul_base_net
+
+  addsvc:
+    image: cage1016/gokitconsul-addsvc:latest
+    container_name: gokitconsul-addsvc
+    depends_on:
+      - consul
+    environment:
+      QS_ADDSVC_LOG_LEVEL: info
+      QS_ADDSVC_HTTP_PORT: 8020
+      QS_ADDSVC_GRPC_PORT: 8021
+      QS_CONSULT_HOST: consul
+      QS_CONSULT_PORT: 8500
+    networks:
+      - gokitconsul_base_net
+    volumes:
+      - ./ssl:/ssl
+  #    ports:
+  #      - 8020:8020
+  #      - 8021:8021
+
+  gateway:
+    image: cage1016/gokitconsul-gateway:latest
+    container_name: gokitconsul-gateway
+    depends_on:
+      - consul
+      - addsvc
+    ports:
+      - 8000:8000
+    environment:
+      QS_GATEWAY_LOG_LEVEL: info
+      QS_GATEWAY_HTTP_PORT: 8000
+      QS_GATEWAY_SERVER_CERT: /ssl/localhost+3.pem
+      QS_GATEWAY_SERVER_KEY: /ssl/localhost+3-key.pem
+      QS_CONSULT_HOST: consul
+      QS_CONSULT_PORT: 8500
+      QS_GATEWAY_RETRY_MAX: 3
+      QS_GATEWAY_RETRY_TIMEOUT: 500
+    networks:
+      - gokitconsul_base_net
+    volumes:
+      - ./ssl:/ssl
