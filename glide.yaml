@@ -1,0 +1,62 @@
+package: github.com/cage1016/gokitconsul
+import:
+- package: github.com/go-kit/kit
+  version: ^0.8.0
+  subpackages:
+  - circuitbreaker
+  - endpoint
+  - log
+  - metrics
+  - metrics/prometheus
+  - ratelimit
+  - sd
+  - sd/consul
+  - sd/lb
+  - tracing/opentracing
+  - tracing/zipkin
+  - transport/grpc
+  - transport/http
+- package: github.com/golang/protobuf
+  version: ^1.3.1
+  subpackages:
+  - proto
+  - protoc-gen-go/descriptor
+- package: github.com/gorilla/mux
+  version: ^1.7.2
+- package: github.com/hashicorp/consul
+  version: ^1.5.1
+  subpackages:
+  - api
+- package: github.com/lightstep/lightstep-tracer-go
+  version: ^0.16.0
+- package: github.com/opentracing/opentracing-go
+  version: ^1.1.0
+- package: github.com/openzipkin-contrib/zipkin-go-opentracing
+  version: ^0.3.5
+- package: github.com/openzipkin/zipkin-go
+  version: ^0.1.6
+  subpackages:
+  - reporter/http
+- package: github.com/prometheus/client_golang
+  version: ^1.0.0
+  subpackages:
+  - prometheus
+  - prometheus/promhttp
+- package: github.com/sony/gobreaker
+  version: ^0.4.1
+- package: golang.org/x/time
+  subpackages:
+  - rate
+- package: google.golang.org/grpc
+  version: ^1.21.1
+  subpackages:
+  - credentials
+  - health/grpc_health_v1
+- package: sourcegraph.com/sourcegraph/appdash
+  subpackages:
+  - opentracing
+testImport:
+- package: github.com/stretchr/testify
+  version: ^1.3.0
+  subpackages:
+  - assert
