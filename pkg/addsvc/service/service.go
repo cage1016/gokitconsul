@@ -4,29 +4,9 @@ import (
 	"context"
 	"errors"
 
+	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/metrics"
-	"google.golang.org/grpc/health/grpc_health_v1"
-
-	log "github.com/cage1016/gokitconsul/pkg/logger"
 )
-
-// Service describes a service that adds things together.
-type Service interface {
-	Sum(ctx context.Context, a, b int) (int, error)
-	Concat(ctx context.Context, a, b string) (string, error)
-	grpc_health_v1.HealthServer
-}
-
-// New returns a basic Service with all of the expected middlewares wired in.
-func New(logger log.Logger, ints, chars metrics.Counter) Service {
-	var svc Service
-	{
-		svc = NewBasicService()
-		svc = LoggingMiddleware(logger)(svc)
-		svc = InstrumentingMiddleware(ints, chars)(svc)
-	}
-	return svc
-}
 
 var (
 	// ErrTwoZeroes is an arbitrary business rule for the Add method.
@@ -42,43 +22,40 @@ var (
 	ErrMaxSizeExceeded = errors.New("result exceeds maximum size")
 )
 
-// NewBasicService returns a naïve, stateless implementation of Service.
-func NewBasicService() Service {
-	return basicService{}
+// Middleware describes a service (as opposed to endpoint) middleware.
+type Middleware func(AddsvcService) AddsvcService
+
+// Service describes a service that adds things together
+// Implement yor service methods methods.
+// e.x: Foo(ctx context.Context, s string)(rs string, err error)
+type AddsvcService interface {
+	Sum(ctx context.Context, a int64, b int64) (rs int64, err error)
+	Concat(ctx context.Context, a string, b string) (rs string, err error)
 }
 
-type basicService struct{}
-
-const (
-	intMax = 1<<31 - 1
-	intMin = -(intMax + 1)
-	maxLen = 10
-)
-
-func (s basicService) Check(context.Context, *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
-	return &grpc_health_v1.HealthCheckResponse{
-		Status: grpc_health_v1.HealthCheckResponse_SERVING,
-	}, nil
+// the concrete implementation of service interface
+type stubAddsvcService struct {
+	logger log.Logger `json:"logger"`
 }
 
-func (s basicService) Watch(*grpc_health_v1.HealthCheckRequest, grpc_health_v1.Health_WatchServer) error {
-	return nil
-}
-
-func (s basicService) Sum(_ context.Context, a, b int) (int, error) {
-	if a == 0 && b == 0 {
-		return 0, ErrTwoZeroes
+// New return a new instance of the service.
+// If you want to add service middleware this is the place to put them.
+func New(logger log.Logger, requestCount metrics.Counter, requestLatency metrics.Histogram) (s AddsvcService) {
+	var svc AddsvcService
+	{
+		svc = &stubAddsvcService{logger: logger}
+		svc = LoggingMiddleware(logger)(svc)
+		svc = InstrumentingMiddleware(requestCount, requestLatency)(svc)
 	}
-	if (b > 0 && a > (intMax-b)) || (b < 0 && a < (intMin-b)) {
-		return 0, ErrIntOverflow
-	}
-	return a + b, nil
+	return svc
 }
 
-// Concat implements Service.
-func (s basicService) Concat(_ context.Context, a, b string) (string, error) {
-	if len(a)+len(b) > maxLen {
-		return "", ErrMaxSizeExceeded
-	}
-	return a + b, nil
+// Implement the business logic of Sum
+func (ad *stubAddsvcService) Sum(ctx context.Context, a int64, b int64) (rs int64, err error) {
+	return a + b, err
+}
+
+// Implement the business logic of Concat
+func (ad *stubAddsvcService) Concat(ctx context.Context, a string, b string) (rs string, err error) {
+	return a + b, err
 }

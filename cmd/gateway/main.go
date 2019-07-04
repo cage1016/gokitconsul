@@ -3,25 +3,25 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
 
+	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
 	"github.com/go-kit/kit/sd/consul"
 	consulsd "github.com/go-kit/kit/sd/consul"
 	"github.com/hashicorp/consul/api"
 	stdopentracing "github.com/opentracing/opentracing-go"
 	stdzipkin "github.com/openzipkin/zipkin-go"
 
-	"github.com/cage1016/gokitconsul"
 	"github.com/cage1016/gokitconsul/pkg/gateway/gatewaytransport"
-	"github.com/cage1016/gokitconsul/pkg/logger"
 )
 
 const (
+	serviceName      = "gateway"
 	defLogLevel      = "error"
 	defConsulHost    = "localhost"
 	defConsulPort    = "8500"
@@ -42,9 +42,14 @@ const (
 	envconsultPort   = "QS_CONSULT_PORT"
 )
 
-const (
-	serviceName = "gateway"
-)
+// Env reads specified environment variable. If no value has been found,
+// fallback is returned.
+func env(key string, fallback string) (s0 string) {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
 type config struct {
 	logLevel     string
@@ -59,12 +64,14 @@ type config struct {
 }
 
 func main() {
-	cfg := loadConfig()
-
-	logger, err := logger.New(os.Stdout, cfg.logLevel)
-	if err != nil {
-		log.Fatalf(err.Error())
+	var logger log.Logger
+	{
+		logger = log.NewLogfmtLogger(os.Stderr)
+		logger = level.NewFilter(logger, level.AllowInfo())
+		logger = log.With(logger, "ts", log.DefaultTimestampUTC)
+		logger = log.With(logger, "caller", log.DefaultCaller)
 	}
+	cfg := loadConfig(logger)
 
 	client := newConsulClient(cfg.consulHost, cfg.consultPort, logger)
 
@@ -72,7 +79,7 @@ func main() {
 	zipkinTracer, _ := stdzipkin.NewTracer(nil, stdzipkin.WithNoopTracer(true))
 
 	ctx := context.Background()
-	errs := make(chan error, 2)
+	errs := make(chan error, 1)
 
 	go startHTTPServer(ctx, client, cfg.retryMax, cfg.retryTimeout, tracer, zipkinTracer, cfg.httpPort, cfg.serverCert, cfg.serverKey, logger, errs)
 
@@ -82,46 +89,46 @@ func main() {
 		errs <- fmt.Errorf("%s", <-c)
 	}()
 
-	err = <-errs
-	logger.Error(fmt.Sprintf("%s service terminated: %s", serviceName, err))
+	err := <-errs
+	level.Info(logger).Log("serviceName", serviceName, "terminated", err)
 }
 
-func loadConfig() config {
-	tls, err := strconv.ParseBool(gokitconsul.Env(envClientTLS, defClientTLS))
+func loadConfig(logger log.Logger) config {
+	tls, err := strconv.ParseBool(env(envClientTLS, defClientTLS))
 	if err != nil {
-		log.Fatalf("Invalid value passed for %s\n", envClientTLS)
+		level.Error(logger).Log("envClientTLS", envClientTLS, "error", err)
 	}
 
-	retryMax, err := strconv.ParseInt(gokitconsul.Env(envRetryMax, defRretryMax), 10, 0)
+	retryMax, err := strconv.ParseInt(env(envRetryMax, defRretryMax), 10, 0)
 	if err != nil {
-		log.Fatalf("Invalid value passed for %s\n", envRetryMax)
+		level.Error(logger).Log("envRetryMax", envRetryMax, "error", err)
 	}
 
-	retryTimeout, err := strconv.ParseInt(gokitconsul.Env(envRetryTimeout, defRretryTimeout), 10, 0)
+	retryTimeout, err := strconv.ParseInt(env(envRetryTimeout, defRretryTimeout), 10, 0)
 	if err != nil {
-		log.Fatalf("Invalid value passed for %s\n", envRetryTimeout)
+		level.Error(logger).Log("envRetryTimeout", envRetryTimeout, "error", err)
 	}
 
 	return config{
-		logLevel:     gokitconsul.Env(envLogLevel, defLogLevel),
+		logLevel:     env(envLogLevel, defLogLevel),
 		clientTLS:    tls,
-		httpPort:     gokitconsul.Env(envHTTPPort, defHTTPPort),
-		serverCert:   gokitconsul.Env(envServerCert, defServerCert),
-		serverKey:    gokitconsul.Env(envServerKey, defServerKey),
-		consulHost:   gokitconsul.Env(envConsulHost, defConsulHost),
-		consultPort:  gokitconsul.Env(envconsultPort, defConsulPort),
+		httpPort:     env(envHTTPPort, defHTTPPort),
+		serverCert:   env(envServerCert, defServerCert),
+		serverKey:    env(envServerKey, defServerKey),
+		consulHost:   env(envConsulHost, defConsulHost),
+		consultPort:  env(envconsultPort, defConsulPort),
 		retryMax:     retryMax,
 		retryTimeout: retryTimeout,
 	}
 }
 
-func newConsulClient(consulHost, consulPort string, logger logger.Logger) consulsd.Client {
+func newConsulClient(consulHost, consulPort string, logger log.Logger) consulsd.Client {
 	// Service discovery domain. In this example we use Consul.
 	var client consulsd.Client
 	{
 		consulConfig := api.DefaultConfig()
 		consulConfig.Address = fmt.Sprintf("%s:%s", consulHost, consulPort)
-		logger.Debug(fmt.Sprintf("consulConfig.Address %s", consulConfig.Address))
+		level.Debug(logger).Log("consulConfig.Address", consulConfig.Address)
 		consulClient, err := api.NewClient(consulConfig)
 		if err != nil {
 			logger.Log("err", err)
@@ -132,13 +139,13 @@ func newConsulClient(consulHost, consulPort string, logger logger.Logger) consul
 	return client
 }
 
-func startHTTPServer(ctx context.Context, client consul.Client, retryMax, retryTimeout int64, tracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, port string, certFile string, keyFile string, logger logger.Logger, errs chan error) {
+func startHTTPServer(ctx context.Context, client consul.Client, retryMax, retryTimeout int64, tracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, port string, certFile string, keyFile string, logger log.Logger, errs chan error) {
 	p := fmt.Sprintf(":%s", port)
 	if certFile != "" || keyFile != "" {
-		logger.Info(fmt.Sprintf("%s service started using https, cert %s key %s, exposed port %s", serviceName, certFile, keyFile, port))
+		level.Info(logger).Log("serviceName", serviceName, "protocol", "HTTP", "exposed", port, "certFile", certFile, "keyFile", keyFile)
 		errs <- http.ListenAndServeTLS(p, certFile, keyFile, gatewaytransport.MakeHandler(ctx, client, retryMax, retryTimeout, tracer, zipkinTracer, logger))
 	} else {
-		logger.Info(fmt.Sprintf("%s service started using http, exposed port %s", serviceName, port))
+		level.Info(logger).Log("serviceName", serviceName, "protocol", "HTTP", "exposed", port)
 		errs <- http.ListenAndServe(p, gatewaytransport.MakeHandler(ctx, client, retryMax, retryTimeout, tracer, zipkinTracer, logger))
 	}
 }

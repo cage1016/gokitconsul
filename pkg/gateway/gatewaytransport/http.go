@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-kit/kit/endpoint"
+	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/sd"
 	"github.com/go-kit/kit/sd/consul"
 	consulsd "github.com/go-kit/kit/sd/consul"
@@ -16,13 +17,12 @@ import (
 	stdzipkin "github.com/openzipkin/zipkin-go"
 	"google.golang.org/grpc"
 
-	addendpoint "github.com/cage1016/gokitconsul/pkg/addsvc/endpoints"
-	addservice "github.com/cage1016/gokitconsul/pkg/addsvc/service"
-	addtransports "github.com/cage1016/gokitconsul/pkg/addsvc/transports"
-	"github.com/cage1016/gokitconsul/pkg/logger"
+	addsvcendpoint "github.com/cage1016/gokitconsul/pkg/addsvc/endpoints"
+	addsvcservice "github.com/cage1016/gokitconsul/pkg/addsvc/service"
+	addsvctransports "github.com/cage1016/gokitconsul/pkg/addsvc/transports"
 )
 
-func MakeHandler(ctx context.Context, client consul.Client, retryMax, retryTimeout int64, tracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, logger logger.Logger) http.Handler {
+func MakeHandler(_ context.Context, client consul.Client, retryMax, retryTimeout int64, tracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, logger log.Logger) http.Handler {
 	r := mux.NewRouter()
 
 	// addsvc
@@ -31,24 +31,24 @@ func MakeHandler(ctx context.Context, client consul.Client, retryMax, retryTimeo
 		var (
 			tags        = []string{"addsvc", "gokitconsul"}
 			passingOnly = true
-			endpoints   = addendpoint.Endpoints{}
+			endpoints   = addsvcendpoint.Endpoints{}
 			instancer   = consulsd.NewInstancer(client, logger, "grpc.health.v1.addsvc", tags, passingOnly)
 		)
 		{
-			factory := addSvcFactory(addendpoint.MakeSumEndpoint, tracer, zipkinTracer, logger)
+			factory := addSvcFactory(addsvcendpoint.MakeSumEndpoint, tracer, zipkinTracer, logger)
 			endpointer := sd.NewEndpointer(instancer, factory, logger)
 			balancer := lb.NewRoundRobin(endpointer)
 			retry := lb.Retry(int(retryMax), time.Duration(retryTimeout)*time.Millisecond, balancer)
 			endpoints.SumEndpoint = retry
 		}
 		{
-			factory := addSvcFactory(addendpoint.MakeConcatEndpoint, tracer, zipkinTracer, logger)
+			factory := addSvcFactory(addsvcendpoint.MakeConcatEndpoint, tracer, zipkinTracer, logger)
 			endpointer := sd.NewEndpointer(instancer, factory, logger)
 			balancer := lb.NewRoundRobin(endpointer)
 			retry := lb.Retry(int(retryMax), time.Duration(retryTimeout)*time.Millisecond, balancer)
 			endpoints.ConcatEndpoint = retry
 		}
-		r.PathPrefix("/addsvc").Handler(http.StripPrefix("/addsvc", addtransports.NewHTTPHandler(endpoints, tracer, zipkinTracer, logger)))
+		r.PathPrefix("/addsvc").Handler(http.StripPrefix("/addsvc", addsvctransports.NewHTTPHandler(endpoints, tracer, zipkinTracer, logger)))
 	}
 
 	return r
@@ -66,7 +66,7 @@ func accessControl(h http.Handler) http.Handler {
 	})
 }
 
-func addSvcFactory(makeEndpoint func(addservice.Service) endpoint.Endpoint, tracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, logger logger.Logger) sd.Factory {
+func addSvcFactory(makeEndpoint func(addsvcservice.AddsvcService) endpoint.Endpoint, tracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, logger log.Logger) sd.Factory {
 	return func(instance string) (endpoint.Endpoint, io.Closer, error) {
 		// We could just as easily use the HTTP or Thrift client package to make
 		// the connection to addsvc. We've chosen gRPC arbitrarily. Note that
@@ -77,7 +77,7 @@ func addSvcFactory(makeEndpoint func(addservice.Service) endpoint.Endpoint, trac
 		if err != nil {
 			return nil, nil, err
 		}
-		service := addtransports.NewGRPCClient(conn, tracer, zipkinTracer, logger)
+		service := addsvctransports.NewGRPCClient(conn, tracer, zipkinTracer, logger)
 
 		// Notice that the addsvc gRPC client converts the connection to a
 		// complete addsvc, and we just throw away everything except the method

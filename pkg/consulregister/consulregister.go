@@ -4,10 +4,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-kit/kit/log"
 	consulsd "github.com/go-kit/kit/sd/consul"
 	"github.com/hashicorp/consul/api"
-
-	"github.com/cage1016/gokitconsul/pkg/logger"
 )
 
 type ConsulRegister struct {
@@ -18,10 +17,10 @@ type ConsulRegister struct {
 	ServicePort                    int      //service port
 	DeregisterCriticalServiceAfter time.Duration
 	Interval                       time.Duration
-	logger                         logger.Logger
+	logger                         log.Logger
 }
 
-func NewConsulRegister(consulAddress, serviceName, serviceIP string, servicePort int, tags []string, logger logger.Logger) *ConsulRegister {
+func NewConsulRegister(consulAddress, serviceName, serviceIP string, servicePort int, tags []string, logger log.Logger) *ConsulRegister {
 	return &ConsulRegister{
 		ConsulAddress:                  consulAddress,
 		ServiceName:                    serviceName,

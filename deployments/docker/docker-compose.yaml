@@ -11,10 +11,10 @@ services:
   consul:
     image: consul:1.5.1
     container_name: gokitconsul-consul
-#    ports:
-#      - 8400:8400
-#      - 8500:8500
-#      - 8600:8600
+    ports:
+      - 8400:8400
+      - 8500:8500
+      - 8600:8600
     networks:
       - gokitconsul_base_net
 
@@ -33,9 +33,9 @@ services:
       - gokitconsul_base_net
     volumes:
       - ./ssl:/ssl
-  #    ports:
-  #      - 8020:8020
-  #      - 8021:8021
+#      ports:
+#        - 8020:8020
+#        - 8021:8021
 
   gateway:
     image: cage1016/gokitconsul-gateway:latest

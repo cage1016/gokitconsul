@@ -15,126 +15,93 @@ import (
 	stdzipkin "github.com/openzipkin/zipkin-go"
 	"github.com/sony/gobreaker"
 	"golang.org/x/time/rate"
-	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/cage1016/gokitconsul/pkg/addsvc/service"
 )
 
-// Endpoints collects all of the endpoints that compose an add service. It's meant to
-// be used as a helper struct, to collect all of the endpoints into a single
-// parameter.
+// Endpoints collects all of the endpoints that compose the addsvc service. It's
+// meant to be used as a helper struct, to collect all of the endpoints into a
+// single parameter.
 type Endpoints struct {
-	SumEndpoint    endpoint.Endpoint
-	ConcatEndpoint endpoint.Endpoint
+	SumEndpoint    endpoint.Endpoint `json:""`
+	ConcatEndpoint endpoint.Endpoint `json:""`
 }
 
-// New returns a Endpoints that wraps the provided server, and wires in all of the
-// expected endpoint middlewares via the various parameters.
-func New(svc service.Service, logger log.Logger, duration metrics.Histogram, otTracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer) Endpoints {
+// New return a new instance of the endpoint that wraps the provided service.
+func New(svc service.AddsvcService, logger log.Logger, duration metrics.Histogram, otTracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer) (ep Endpoints) {
 	var sumEndpoint endpoint.Endpoint
 	{
+		method := "sum"
 		sumEndpoint = MakeSumEndpoint(svc)
 		sumEndpoint = ratelimit.NewErroringLimiter(rate.NewLimiter(rate.Every(time.Second), 100))(sumEndpoint)
 		sumEndpoint = circuitbreaker.Gobreaker(gobreaker.NewCircuitBreaker(gobreaker.Settings{}))(sumEndpoint)
-		sumEndpoint = opentracing.TraceServer(otTracer, "Sum")(sumEndpoint)
-		sumEndpoint = zipkin.TraceEndpoint(zipkinTracer, "Sum")(sumEndpoint)
-		sumEndpoint = LoggingMiddleware(log.With(logger, "method", "Sum"))(sumEndpoint)
-		sumEndpoint = InstrumentingMiddleware(duration.With("method", "Sum"))(sumEndpoint)
+		sumEndpoint = opentracing.TraceServer(otTracer, method)(sumEndpoint)
+		sumEndpoint = zipkin.TraceEndpoint(zipkinTracer, method)(sumEndpoint)
+		sumEndpoint = LoggingMiddleware(log.With(logger, "method", method))(sumEndpoint)
+		sumEndpoint = InstrumentingMiddleware(duration.With("method", method))(sumEndpoint)
+		ep.SumEndpoint = sumEndpoint
 	}
+
 	var concatEndpoint endpoint.Endpoint
 	{
+		method := "concat"
 		concatEndpoint = MakeConcatEndpoint(svc)
 		concatEndpoint = ratelimit.NewErroringLimiter(rate.NewLimiter(rate.Every(time.Second), 100))(concatEndpoint)
 		concatEndpoint = circuitbreaker.Gobreaker(gobreaker.NewCircuitBreaker(gobreaker.Settings{}))(concatEndpoint)
-		concatEndpoint = opentracing.TraceServer(otTracer, "Concat")(concatEndpoint)
-		concatEndpoint = zipkin.TraceEndpoint(zipkinTracer, "Concat")(concatEndpoint)
-		concatEndpoint = LoggingMiddleware(log.With(logger, "method", "Concat"))(concatEndpoint)
-		concatEndpoint = InstrumentingMiddleware(duration.With("method", "Concat"))(concatEndpoint)
+		concatEndpoint = opentracing.TraceServer(otTracer, method)(concatEndpoint)
+		concatEndpoint = zipkin.TraceEndpoint(zipkinTracer, method)(concatEndpoint)
+		concatEndpoint = LoggingMiddleware(log.With(logger, "method", method))(concatEndpoint)
+		concatEndpoint = InstrumentingMiddleware(duration.With("method", method))(concatEndpoint)
+		ep.ConcatEndpoint = concatEndpoint
 	}
-	return Endpoints{
-		SumEndpoint:    sumEndpoint,
-		ConcatEndpoint: concatEndpoint,
-	}
+
+	return ep
 }
 
-func (s Endpoints) Check(context.Context, *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
-	panic("implement me")
-}
-
-func (s Endpoints) Watch(*grpc_health_v1.HealthCheckRequest, grpc_health_v1.Health_WatchServer) error {
-	panic("implement me")
+// MakeSumEndpoint returns an endpoint that invokes Sum on the service.
+// Primarily useful in a server.
+func MakeSumEndpoint(svc service.AddsvcService) (ep endpoint.Endpoint) {
+	return func(ctx context.Context, request interface{}) (interface{}, error) {
+		req := request.(SumRequest)
+		if err := req.validate(); err != nil {
+			return nil, err
+		}
+		rs, err := svc.Sum(ctx, req.A, req.B)
+		return SumResponse{Rs: rs, Err: err}, nil
+	}
 }
 
 // Sum implements the service interface, so Endpoints may be used as a service.
 // This is primarily useful in the context of a client library.
-func (s Endpoints) Sum(ctx context.Context, a, b int) (int, error) {
-	resp, err := s.SumEndpoint(ctx, SumRequest{A: a, B: b})
+func (e Endpoints) Sum(ctx context.Context, a int64, b int64) (rs int64, err error) {
+	resp, err := e.SumEndpoint(ctx, SumRequest{A: a, B: b})
 	if err != nil {
-		return 0, err
+		return
 	}
 	response := resp.(SumResponse)
-	return response.V, response.Err
+	return response.Rs, response.Err
 }
 
-// Concat implements the service interface, so Endpoints may be used as a
-// service. This is primarily useful in the context of a client library.
-func (s Endpoints) Concat(ctx context.Context, a, b string) (string, error) {
-	resp, err := s.ConcatEndpoint(ctx, ConcatRequest{A: a, B: b})
+// MakeConcatEndpoint returns an endpoint that invokes Concat on the service.
+// Primarily useful in a server.
+func MakeConcatEndpoint(svc service.AddsvcService) (ep endpoint.Endpoint) {
+	return func(ctx context.Context, request interface{}) (interface{}, error) {
+		req := request.(ConcatRequest)
+		if err := req.validate(); err != nil {
+			return nil, err
+		}
+		rs, err := svc.Concat(ctx, req.A, req.B)
+		return ConcatResponse{Rs: rs, Err: err}, nil
+	}
+}
+
+// Concat implements the service interface, so Endpoints may be used as a service.
+// This is primarily useful in the context of a client library.
+func (e Endpoints) Concat(ctx context.Context, a string, b string) (rs string, err error) {
+	resp, err := e.ConcatEndpoint(ctx, ConcatRequest{A: a, B: b})
 	if err != nil {
-		return "", err
+		return
 	}
 	response := resp.(ConcatResponse)
-	return response.V, response.Err
+	return response.Rs, response.Err
 }
-
-// MakeSumEndpoint constructs a Sum endpoint wrapping the service.
-func MakeSumEndpoint(s service.Service) endpoint.Endpoint {
-	return func(ctx context.Context, request interface{}) (response interface{}, err error) {
-		req := request.(SumRequest)
-		v, err := s.Sum(ctx, req.A, req.B)
-		return SumResponse{V: v, Err: err}, nil
-	}
-}
-
-// MakeConcatEndpoint constructs a Concat endpoint wrapping the service.
-func MakeConcatEndpoint(s service.Service) endpoint.Endpoint {
-	return func(ctx context.Context, request interface{}) (response interface{}, err error) {
-		req := request.(ConcatRequest)
-		v, err := s.Concat(ctx, req.A, req.B)
-		return ConcatResponse{V: v, Err: err}, nil
-	}
-}
-
-// compile time assertions for our response types implementing endpoint.Failer.
-var (
-	_ endpoint.Failer = SumResponse{}
-	_ endpoint.Failer = ConcatResponse{}
-)
-
-// SumRequest collects the request parameters for the Sum method.
-type SumRequest struct {
-	A, B int
-}
-
-// SumResponse collects the response values for the Sum method.
-type SumResponse struct {
-	V   int   `json:"v"`
-	Err error `json:"-"` // should be intercepted by Failed/errorEncoder
-}
-
-// Failed implements endpoint.Failer.
-func (r SumResponse) Failed() error { return r.Err }
-
-// ConcatRequest collects the request parameters for the Concat method.
-type ConcatRequest struct {
-	A, B string
-}
-
-// ConcatResponse collects the response values for the Concat method.
-type ConcatResponse struct {
-	V   string `json:"v"`
-	Err error  `json:"-"`
-}
-
-// Failed implements endpoint.Failer.
-func (r ConcatResponse) Failed() error { return r.Err }
