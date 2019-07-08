@@ -18,6 +18,14 @@ services:
     networks:
       - gokitconsul_base_net
 
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: gokitconsul-zipkin
+    ports:
+      - 9411:9411
+    networks:
+      - gokitconsul_base_net
+
   addsvc:
     image: cage1016/gokitconsul-addsvc:latest
     container_name: gokitconsul-addsvc
@@ -29,13 +37,14 @@ services:
       QS_ADDSVC_GRPC_PORT: 8021
       QS_CONSULT_HOST: consul
       QS_CONSULT_PORT: 8500
+      QS_ZIPKIN_V2_URL: http://zipkin:9411/api/v2/spans
     networks:
       - gokitconsul_base_net
     volumes:
       - ./ssl:/ssl
-#      ports:
-#        - 8020:8020
-#        - 8021:8021
+#    ports:
+#      - 8020:8020
+#      - 8021:8021
 
   gateway:
     image: cage1016/gokitconsul-gateway:latest
@@ -50,10 +59,11 @@ services:
       QS_GATEWAY_HTTP_PORT: 8000
       QS_GATEWAY_SERVER_CERT: /ssl/localhost+3.pem
       QS_GATEWAY_SERVER_KEY: /ssl/localhost+3-key.pem
-      QS_CONSULT_HOST: consul
-      QS_CONSULT_PORT: 8500
       QS_GATEWAY_RETRY_MAX: 3
       QS_GATEWAY_RETRY_TIMEOUT: 500
+      QS_CONSULT_HOST: consul
+      QS_CONSULT_PORT: 8500
+      QS_ZIPKIN_V2_URL: http://zipkin:9411/api/v2/spans
     networks:
       - gokitconsul_base_net
     volumes:

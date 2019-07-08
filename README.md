@@ -34,16 +34,19 @@ make dockers
 $ make u
 docker-compose -f deployments/docker/docker-compose.yaml up -d
 Creating network "docker_gokitconsul_base_net" with driver "bridge"
+Creating gokitconsul-zipkin ... done
 Creating gokitconsul-consul ... done
 Creating gokitconsul-addsvc ... done
 Creating gokitconsul-gateway ... done
+...
 
 
 $ docker ps
-CONTAINER ID        IMAGE                                COMMAND                  CREATED             STATUS              PORTS                                                        NAMES
-eb5c3799e481        cage1016/gokitconsul-gateway:latest   "/exe"                   30 seconds ago      Up 29 seconds       0.0.0.0:9000->9000/tcp                                       gokitconsul-gateway
-a3ec4fe2a9f3        cage1016/gokitconsul-addsvc:latest    "/exe"                   31 seconds ago      Up 29 seconds                                                                    gokitconsul-addsvc
-16ac843b5026        consul:1.5.1                         "docker-entrypoint.s…"   32 seconds ago      Up 30 seconds       8300-8302/tcp, 8500/tcp, 8301-8302/udp, 8600/tcp, 8600/udp   gokitconsul-consul
+CONTAINER ID        IMAGE                                 COMMAND                  CREATED             STATUS              PORTS                                                                                                            NAMES
+e6e671ba6dc0        cage1016/gokitconsul-gateway:latest   "/exe"                   27 seconds ago      Up 25 seconds       0.0.0.0:8000->8000/tcp                                                                                           gokitconsul-gateway
+ea709ce275d5        cage1016/gokitconsul-addsvc:latest    "/exe"                   28 seconds ago      Up 26 seconds                                                                                                                        gokitconsul-addsvc
+8545d4c168e2        consul:1.5.1                          "docker-entrypoint.s…"   30 seconds ago      Up 27 seconds       0.0.0.0:8400->8400/tcp, 8301-8302/udp, 0.0.0.0:8500->8500/tcp, 8300-8302/tcp, 8600/udp, 0.0.0.0:8600->8600/tcp   gokitconsul-consul
+f80956253e86        openzipkin/zipkin                     "/busybox/sh run.sh"     30 seconds ago      Up 28 seconds       9410/tcp, 0.0.0.0:9411->9411/tcp                                                                                 gokitconsul-zipkin
 ```
 
 ## Test

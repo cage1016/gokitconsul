@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"sourcegraph.com/sourcegraph/appdash"
 	appdashot "sourcegraph.com/sourcegraph/appdash/opentracing"
+	kitgrpc "github.com/go-kit/kit/transport/grpc"
 
 	pb "github.com/cage1016/gokitconsul/pb/addsvc"
 	"github.com/cage1016/gokitconsul/pkg/addsvc/endpoints"
@@ -40,8 +41,8 @@ const (
 	defConsulHost     string = "localhost"
 	defConsulPort     string = "8500"
 	defServiceHost    string = "localhost"
-	defHTTPPort       string = "8180"
-	defGRPCPort       string = "8181"
+	defHTTPPort       string = "8020"
+	defGRPCPort       string = "8021"
 	defServerCert     string = ""
 	defServerKey      string = ""
 	defClientTLS      string = "false"
@@ -60,8 +61,8 @@ const (
 	envServerKey      string = "QS_ADDSVC_SERVER_KEY"
 	envClientTLS      string = "QS_ADDSVC_CLIENT_TLS"
 	envCACerts        string = "QS_ADDSVC_CA_CERTS"
-	envZipkinV1URL    string = "QS_ADDSVC_ZIPKIN_V1_URL"
-	envZipkinV2URL    string = "QS_ADDSVC_ZIPKIN_V2_URL"
+	envZipkinV1URL    string = "QS_ZIPKIN_V1_URL"
+	envZipkinV2URL    string = "QS_ZIPKIN_V2_URL"
 	envLightstepToken string = "QS_ADDSVC_LIGHT_STEP_TOKEN"
 	envAppdashAddr    string = "QS_ADDSVC_APPDASH_ADDR"
 )
@@ -185,7 +186,7 @@ func NewServer(cfg config, logger log.Logger) (p0 pb.AddsvcServer, h1 http.Handl
 			defer collector.Close()
 			var (
 				debug       = false
-				hostPort    = "localhost:80"
+				hostPort    = fmt.Sprintf("localhost:%s", cfg.httpPort)
 				serviceName = serviceName
 			)
 			recorder := zipkinot.NewRecorder(collector, debug, hostPort, serviceName)
@@ -210,12 +211,12 @@ func NewServer(cfg config, logger log.Logger) (p0 pb.AddsvcServer, h1 http.Handl
 	{
 		var (
 			err           error
-			hostPort      = "localhost:80"
+			hostPort      = fmt.Sprintf("localhost:%s", cfg.httpPort)
 			serviceName   = serviceName
 			useNoopTracer = (cfg.zipkinV2URL == "")
 			reporter      = zipkinhttp.NewReporter(cfg.zipkinV2URL)
 		)
-		defer reporter.Close()
+		//defer reporter.Close()
 		zEP, _ := zipkin.NewEndpoint(serviceName, hostPort)
 		zipkinTracer, err = zipkin.NewTracer(reporter, zipkin.WithLocalEndpoint(zEP), zipkin.WithNoopTracer(useNoopTracer))
 		if err != nil {
@@ -278,10 +279,10 @@ func startGRPCServer(registar sd.Registrar, grpcServer pb.AddsvcServer, port str
 			os.Exit(1)
 		}
 		level.Info(logger).Log("serviceName", serviceName, "protocol", "GRPC", "exposed", port, "certFile", certFile, "keyFile", keyFile)
-		server = grpc.NewServer(grpc.Creds(creds))
+		server = grpc.NewServer(grpc.UnaryInterceptor(kitgrpc.Interceptor), grpc.Creds(creds))
 	} else {
 		level.Info(logger).Log("serviceName", serviceName, "protocol", "GRPC", "exposed", port)
-		server = grpc.NewServer()
+		server = grpc.NewServer(grpc.UnaryInterceptor(kitgrpc.Interceptor))
 	}
 	grpc_health_v1.RegisterHealthServer(server, &service.HealthImpl{})
 	pb.RegisterAddsvcServer(server, grpcServer)
