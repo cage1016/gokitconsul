@@ -29,7 +29,9 @@ func MakeHandler(_ context.Context, client consul.Client, retryMax, retryTimeout
 	{
 
 		var (
-			tags        = []string{"addsvc", "gokitconsul"}
+			namespace   = "gokitconsul"
+			serviceName = "addsvc"
+			tags        = []string{namespace, serviceName}
 			passingOnly = true
 			endpoints   = addsvcendpoint.Endpoints{}
 			instancer   = consulsd.NewInstancer(client, logger, "grpc.health.v1.addsvc", tags, passingOnly)

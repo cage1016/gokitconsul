@@ -14,6 +14,7 @@ import (
 	"github.com/go-kit/kit/metrics"
 	"github.com/go-kit/kit/metrics/prometheus"
 	"github.com/go-kit/kit/sd"
+	kitgrpc "github.com/go-kit/kit/transport/grpc"
 	"github.com/lightstep/lightstep-tracer-go"
 	stdopentracing "github.com/opentracing/opentracing-go"
 	zipkinot "github.com/openzipkin-contrib/zipkin-go-opentracing"
@@ -25,7 +26,6 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"sourcegraph.com/sourcegraph/appdash"
 	appdashot "sourcegraph.com/sourcegraph/appdash/opentracing"
-	kitgrpc "github.com/go-kit/kit/transport/grpc"
 
 	pb "github.com/cage1016/gokitconsul/pb/addsvc"
 	"github.com/cage1016/gokitconsul/pkg/addsvc/endpoints"
@@ -35,8 +35,8 @@ import (
 )
 
 const (
-	serviceName       string = "addsvc"
-	tag               string = "gokitconsul"
+	defNameSpace      string = "gokitconsul"
+	defServiceName    string = "addsvc"
 	defLogLevel       string = "error"
 	defConsulHost     string = "localhost"
 	defConsulPort     string = "8500"
@@ -51,9 +51,15 @@ const (
 	defZipkinV2URL    string = ""
 	defLightstepToken string = ""
 	defAppdashAddr    string = ""
-	envLogLevel       string = "QS_ADDSVC_LOG_LEVEL"
 	envConsulHost     string = "QS_CONSULT_HOST"
 	envConsultPort    string = "QS_CONSULT_PORT"
+	envZipkinV1URL    string = "QS_ZIPKIN_V1_URL"
+	envZipkinV2URL    string = "QS_ZIPKIN_V2_URL"
+	envLightstepToken string = "QS_LIGHT_STEP_TOKEN"
+	envAppdashAddr    string = "QS_APPDASH_ADDR"
+	envNameSpace      string = "QS_ADDSVC_NAMESPACE"
+	envServiceName    string = "QS_ADDSVC_SERVICE_NAME"
+	envLogLevel       string = "QS_ADDSVC_LOG_LEVEL"
 	envServiceHost    string = "QS_ADDSVC_SERVICE_HOST"
 	envHTTPPort       string = "QS_ADDSVC_HTTP_PORT"
 	envGRPCPort       string = "QS_ADDSVC_GRPC_PORT"
@@ -61,13 +67,11 @@ const (
 	envServerKey      string = "QS_ADDSVC_SERVER_KEY"
 	envClientTLS      string = "QS_ADDSVC_CLIENT_TLS"
 	envCACerts        string = "QS_ADDSVC_CA_CERTS"
-	envZipkinV1URL    string = "QS_ZIPKIN_V1_URL"
-	envZipkinV2URL    string = "QS_ZIPKIN_V2_URL"
-	envLightstepToken string = "QS_ADDSVC_LIGHT_STEP_TOKEN"
-	envAppdashAddr    string = "QS_ADDSVC_APPDASH_ADDR"
 )
 
 type config struct {
+	nameSpace      string
+	serviceName    string
 	logLevel       string `json:"log_level"`
 	clientTLS      bool   `json:"client_tls"`
 	caCerts        string `json:"ca_certs"`
@@ -121,23 +125,24 @@ func main() {
 	consulAddres := fmt.Sprintf("%s:%s", cfg.consulHost, cfg.consultPort)
 	serviceIp := localIP()
 	servicePort, _ := strconv.Atoi(cfg.grpcPort)
-	consulReg := consulregister.NewConsulRegister(consulAddres, serviceName, serviceIp, servicePort, []string{serviceName, tag}, logger)
+	consulReg := consulregister.NewConsulRegister(consulAddres, cfg.serviceName, serviceIp, servicePort, []string{cfg.nameSpace, cfg.serviceName}, logger)
 	svcRegistar, err := consulReg.NewConsulGRPCRegister()
+	defer svcRegistar.Deregister()
 	if err != nil {
 		level.Error(logger).Log(
 			"consulAddres", consulAddres,
-			"serviceName", serviceName,
+			"serviceName", cfg.serviceName,
 			"serviceIp", serviceIp,
 			"servicePort", servicePort,
-			"tags", []string{serviceName, tag},
+			"tags", []string{cfg.nameSpace, cfg.serviceName},
 			"err", err,
 		)
 	}
 
 	errs := make(chan error, 2)
 	grpcServer, httpHandler := NewServer(cfg, logger)
-	go startHTTPServer(httpHandler, cfg.httpPort, cfg.serverCert, cfg.serverKey, logger, errs)
-	go startGRPCServer(svcRegistar, grpcServer, cfg.grpcPort, cfg.serverCert, cfg.serverKey, logger, errs)
+	go startHTTPServer(cfg, httpHandler, logger, errs)
+	go startGRPCServer(cfg, svcRegistar, grpcServer, logger, errs)
 
 	go func() {
 		c := make(chan os.Signal)
@@ -146,8 +151,7 @@ func main() {
 	}()
 
 	err = <-errs
-	svcRegistar.Deregister()
-	level.Info(logger).Log("serviceName", serviceName, "terminated", err)
+	level.Info(logger).Log("serviceName", cfg.serviceName, "terminated", err)
 }
 
 func loadConfig(logger log.Logger) (cfg config) {
@@ -156,6 +160,8 @@ func loadConfig(logger log.Logger) (cfg config) {
 		level.Error(logger).Log("envClientTLS", envClientTLS, "error", err)
 	}
 
+	cfg.nameSpace = env(envNameSpace, defNameSpace)
+	cfg.serviceName = env(envServiceName, defServiceName)
 	cfg.logLevel = env(envLogLevel, defLogLevel)
 	cfg.clientTLS = tls
 	cfg.caCerts = env(envCACerts, defCACerts)
@@ -173,7 +179,7 @@ func loadConfig(logger log.Logger) (cfg config) {
 	return cfg
 }
 
-func NewServer(cfg config, logger log.Logger) (p0 pb.AddsvcServer, h1 http.Handler) {
+func NewServer(cfg config, logger log.Logger) (pb.AddsvcServer, http.Handler) {
 	var tracer stdopentracing.Tracer
 	{
 		if cfg.zipkinV1URL != "" && cfg.zipkinV2URL == "" {
@@ -187,7 +193,7 @@ func NewServer(cfg config, logger log.Logger) (p0 pb.AddsvcServer, h1 http.Handl
 			var (
 				debug       = false
 				hostPort    = fmt.Sprintf("localhost:%s", cfg.httpPort)
-				serviceName = serviceName
+				serviceName = cfg.serviceName
 			)
 			recorder := zipkinot.NewRecorder(collector, debug, hostPort, serviceName)
 			tracer, err = zipkinot.NewTracer(recorder)
@@ -212,7 +218,7 @@ func NewServer(cfg config, logger log.Logger) (p0 pb.AddsvcServer, h1 http.Handl
 		var (
 			err           error
 			hostPort      = fmt.Sprintf("localhost:%s", cfg.httpPort)
-			serviceName   = serviceName
+			serviceName   = cfg.serviceName
 			useNoopTracer = (cfg.zipkinV2URL == "")
 			reporter      = zipkinhttp.NewReporter(cfg.zipkinV2URL)
 		)
@@ -235,13 +241,13 @@ func NewServer(cfg config, logger log.Logger) (p0 pb.AddsvcServer, h1 http.Handl
 	)
 	{
 		fieldKeys = []string{"method", "error"}
-		requestCount = prometheus.NewCounterFrom(stdprometheus.CounterOpts{Namespace: "gokitconsul", Name: "request_count", Help: "Number of requests received."}, fieldKeys)
-		requestLatency = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{Namespace: "gokitconsul", Name: "request_latency_microseconds", Help: "Total duration of requests in microseconds."}, fieldKeys)
+		requestCount = prometheus.NewCounterFrom(stdprometheus.CounterOpts{Namespace: cfg.nameSpace, Subsystem: cfg.serviceName, Name: "request_count", Help: "Number of requests received."}, fieldKeys)
+		requestLatency = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{Namespace: cfg.nameSpace, Subsystem: cfg.serviceName, Name: "request_latency_microseconds", Help: "Total duration of requests in microseconds."}, fieldKeys)
 	}
 
 	var duration metrics.Histogram
 	{
-		duration = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{Namespace: "gokitconsul", Name: "request_duration_ns", Help: "Request duration in nanoseconds."}, []string{"method", "success"})
+		duration = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{Namespace: cfg.nameSpace, Subsystem: cfg.serviceName, Name: "request_duration_ns", Help: "Request duration in nanoseconds."}, []string{"method", "success"})
 	}
 
 	service := service.New(logger, requestCount, requestLatency)
@@ -252,36 +258,36 @@ func NewServer(cfg config, logger log.Logger) (p0 pb.AddsvcServer, h1 http.Handl
 	return grpcServer, httpHandler
 }
 
-func startHTTPServer(httpHandler http.Handler, port string, certFile string, keyFile string, logger log.Logger, errs chan error) {
-	p := fmt.Sprintf(":%s", port)
-	if certFile != "" || keyFile != "" {
-		level.Info(logger).Log("serviceName", serviceName, "protocol", "HTTP", "exposed", port, "certFile", certFile, "keyFile", keyFile)
-		errs <- http.ListenAndServeTLS(p, certFile, keyFile, httpHandler)
+func startHTTPServer(cfg config, httpHandler http.Handler, logger log.Logger, errs chan error) {
+	p := fmt.Sprintf(":%s", cfg.httpPort)
+	if cfg.serverCert != "" || cfg.serverKey != "" {
+		level.Info(logger).Log("serviceName", cfg.serviceName, "protocol", "HTTP", "exposed", cfg.httpPort, "certFile", cfg.serverCert, "keyFile", cfg.serverKey)
+		errs <- http.ListenAndServeTLS(p, cfg.serverCert, cfg.serverKey, httpHandler)
 	} else {
-		level.Info(logger).Log("serviceName", serviceName, "protocol", "HTTP", "exposed", port)
+		level.Info(logger).Log("serviceName", cfg.serviceName, "protocol", "HTTP", "exposed", cfg.httpPort)
 		errs <- http.ListenAndServe(p, httpHandler)
 	}
 }
 
-func startGRPCServer(registar sd.Registrar, grpcServer pb.AddsvcServer, port string, certFile string, keyFile string, logger log.Logger, errs chan error) {
-	p := fmt.Sprintf(":%s", port)
+func startGRPCServer(cfg config, registar sd.Registrar, grpcServer pb.AddsvcServer, logger log.Logger, errs chan error) {
+	p := fmt.Sprintf(":%s", cfg.grpcPort)
 	listener, err := net.Listen("tcp", p)
 	if err != nil {
-		level.Error(logger).Log("serviceName", serviceName, "protocol", "GRPC", "listen", port, "err", err)
+		level.Error(logger).Log("serviceName", cfg.serviceName, "protocol", "GRPC", "listen", cfg.grpcPort, "err", err)
 		os.Exit(1)
 	}
 
 	var server *grpc.Server
-	if certFile != "" || keyFile != "" {
-		creds, err := credentials.NewServerTLSFromFile(certFile, keyFile)
+	if cfg.serverCert != "" || cfg.serverKey != "" {
+		creds, err := credentials.NewServerTLSFromFile(cfg.serverCert, cfg.serverKey)
 		if err != nil {
-			level.Error(logger).Log("serviceName", serviceName, "certificates", creds, "err", err)
+			level.Error(logger).Log("serviceName", cfg.serviceName, "certificates", creds, "err", err)
 			os.Exit(1)
 		}
-		level.Info(logger).Log("serviceName", serviceName, "protocol", "GRPC", "exposed", port, "certFile", certFile, "keyFile", keyFile)
+		level.Info(logger).Log("serviceName", cfg.serviceName, "protocol", "GRPC", "exposed", cfg.grpcPort, "certFile", cfg.serverCert, "keyFile", cfg.serverKey)
 		server = grpc.NewServer(grpc.UnaryInterceptor(kitgrpc.Interceptor), grpc.Creds(creds))
 	} else {
-		level.Info(logger).Log("serviceName", serviceName, "protocol", "GRPC", "exposed", port)
+		level.Info(logger).Log("serviceName", cfg.serviceName, "protocol", "GRPC", "exposed", cfg.grpcPort)
 		server = grpc.NewServer(grpc.UnaryInterceptor(kitgrpc.Interceptor))
 	}
 	grpc_health_v1.RegisterHealthServer(server, &service.HealthImpl{})
