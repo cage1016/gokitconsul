@@ -35,30 +35,30 @@ import (
 )
 
 const (
-	defNameSpace      string = "gokitconsul"
-	defServiceName    string = "addsvc"
-	defLogLevel       string = "error"
 	defConsulHost     string = "localhost"
 	defConsulPort     string = "8500"
-	defServiceHost    string = "localhost"
-	defHTTPPort       string = "8020"
-	defGRPCPort       string = "8021"
-	defServerCert     string = ""
-	defServerKey      string = ""
-	defClientTLS      string = "false"
-	defCACerts        string = ""
 	defZipkinV1URL    string = ""
 	defZipkinV2URL    string = ""
 	defLightstepToken string = ""
 	defAppdashAddr    string = ""
+	defNameSpace      string = "gokitconsul"
+	defServiceName    string = "addsvc"
+	defLogLevel       string = "error"
+	defServiceHost    string = "localhost"
+	defHTTPPort       string = "8180"
+	defGRPCPort       string = "8181"
+	defServerCert     string = ""
+	defServerKey      string = ""
+	defClientTLS      string = "false"
+	defCACerts        string = ""
 	envConsulHost     string = "QS_CONSULT_HOST"
 	envConsultPort    string = "QS_CONSULT_PORT"
 	envZipkinV1URL    string = "QS_ZIPKIN_V1_URL"
 	envZipkinV2URL    string = "QS_ZIPKIN_V2_URL"
 	envLightstepToken string = "QS_LIGHT_STEP_TOKEN"
 	envAppdashAddr    string = "QS_APPDASH_ADDR"
-	envNameSpace      string = "QS_ADDSVC_NAMESPACE"
-	envServiceName    string = "QS_ADDSVC_SERVICE_NAME"
+	envNameSpace      string = "QS_addsvc_NAMESPACE"
+	envServiceName    string = "QS_addsvc_SERVICE_NAME"
 	envLogLevel       string = "QS_ADDSVC_LOG_LEVEL"
 	envServiceHost    string = "QS_ADDSVC_SERVICE_HOST"
 	envHTTPPort       string = "QS_ADDSVC_HTTP_PORT"
@@ -70,8 +70,8 @@ const (
 )
 
 type config struct {
-	nameSpace      string
-	serviceName    string
+	nameSpace      string `json:"name_space"`
+	serviceName    string `json:"service_name"`
 	logLevel       string `json:"log_level"`
 	clientTLS      bool   `json:"client_tls"`
 	caCerts        string `json:"ca_certs"`
@@ -222,7 +222,6 @@ func NewServer(cfg config, logger log.Logger) (pb.AddsvcServer, http.Handler) {
 			useNoopTracer = (cfg.zipkinV2URL == "")
 			reporter      = zipkinhttp.NewReporter(cfg.zipkinV2URL)
 		)
-		//defer reporter.Close()
 		zEP, _ := zipkin.NewEndpoint(serviceName, hostPort)
 		zipkinTracer, err = zipkin.NewTracer(reporter, zipkin.WithLocalEndpoint(zEP), zipkin.WithNoopTracer(useNoopTracer))
 		if err != nil {
@@ -290,8 +289,8 @@ func startGRPCServer(cfg config, registar sd.Registrar, grpcServer pb.AddsvcServ
 		level.Info(logger).Log("serviceName", cfg.serviceName, "protocol", "GRPC", "exposed", cfg.grpcPort)
 		server = grpc.NewServer(grpc.UnaryInterceptor(kitgrpc.Interceptor))
 	}
-	grpc_health_v1.RegisterHealthServer(server, &service.HealthImpl{})
 	pb.RegisterAddsvcServer(server, grpcServer)
+	grpc_health_v1.RegisterHealthServer(server, &service.HealthImpl{})
 	registar.Register()
 	errs <- server.Serve(listener)
 }
