@@ -19,6 +19,7 @@
 ## Services
 
 - pkg/addsvc
+- pkg/foosvc
 
 
 ## Install
@@ -37,16 +38,19 @@ Creating network "docker_gokitconsul_base_net" with driver "bridge"
 Creating gokitconsul-zipkin ... done
 Creating gokitconsul-consul ... done
 Creating gokitconsul-addsvc ... done
+Creating gokitconsul-foosvc ... done
 Creating gokitconsul-gateway ... done
 ...
 
 
 $ docker ps
 CONTAINER ID        IMAGE                                 COMMAND                  CREATED             STATUS              PORTS                                                                                                            NAMES
-e6e671ba6dc0        cage1016/gokitconsul-gateway:latest   "/exe"                   27 seconds ago      Up 25 seconds       0.0.0.0:8000->8000/tcp                                                                                           gokitconsul-gateway
-ea709ce275d5        cage1016/gokitconsul-addsvc:latest    "/exe"                   28 seconds ago      Up 26 seconds                                                                                                                        gokitconsul-addsvc
-8545d4c168e2        consul:1.5.1                          "docker-entrypoint.s…"   30 seconds ago      Up 27 seconds       0.0.0.0:8400->8400/tcp, 8301-8302/udp, 0.0.0.0:8500->8500/tcp, 8300-8302/tcp, 8600/udp, 0.0.0.0:8600->8600/tcp   gokitconsul-consul
-f80956253e86        openzipkin/zipkin                     "/busybox/sh run.sh"     30 seconds ago      Up 28 seconds       9410/tcp, 0.0.0.0:9411->9411/tcp                                                                                 gokitconsul-zipkin
+57157cdc19dd        cage1016/gokitconsul-foosvc:latest    "/exe"                   10 minutes ago      Up 10 minutes                                                                                                                        gokitconsul-foosvc
+29f808c19f2b        cage1016/gokitconsul-gateway:latest   "/exe"                   10 minutes ago      Up 10 minutes       0.0.0.0:8000->8000/tcp                                                                                           gokitconsul-gateway
+6865dd7727c4        cage1016/gokitconsul-addsvc:latest    "/exe"                   10 minutes ago      Up 10 minutes                                                                                                                        gokitconsul-addsvc
+71a8bdaba125        openzipkin/zipkin                     "/busybox/sh run.sh"     10 minutes ago      Up 10 minutes       9410/tcp, 0.0.0.0:9411->9411/tcp                                                                                 gokitconsul-zipkin
+fcb3a785dd6c        consul:1.5.1                          "docker-entrypoint.s…"   10 minutes ago      Up 10 minutes       0.0.0.0:8400->8400/tcp, 8301-8302/udp, 0.0.0.0:8500->8500/tcp, 8300-8302/tcp, 8600/udp, 0.0.0.0:8600->8600/tcp   gokitconsul-consul
+
 ```
 
 ## Test
@@ -54,11 +58,15 @@ f80956253e86        openzipkin/zipkin                     "/busybox/sh run.sh"  
 ```sh
 # sum
 $ curl -X "POST" "https://localhost:8000/addsvc/sum" -H 'Content-Type: application/json; charset=utf-8' -d $'{ "a": 133, "b": 10333}'
-{"v":10466}
+{"rs":10466,"err":null}
 
 # concat
 $ curl -X "POST" "https://localhost:8000/addsvc/concat" -H 'Content-Type: application/json; charset=utf-8' -d $'{ "a": "133", "b": "10333"}'
-{"v":"13310333"}
+{"rs":"13310333","err":null}
+
+# foo
+$ curl -X "POST" "https://localhost:8000/foosvc/foo" -H 'Content-Type: application/json; charset=utf-8' -d $'{ "s": "😆"}'
+{"res":"hello 😆","err":null}
 
 ```
 

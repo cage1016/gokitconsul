@@ -26,6 +26,25 @@ services:
     networks:
       - gokitconsul_base_net
 
+  foosvc:
+    image: cage1016/gokitconsul-foosvc:latest
+    container_name: gokitconsul-foosvc
+    depends_on:
+      - consul
+      - addsvc
+    environment:
+      QS_ADDSVC_LOG_LEVEL: info
+      QS_ADDSVC_HTTP_PORT: 7020
+      QS_ADDSVC_GRPC_PORT: 7021
+      QS_CONSULT_HOST: consul
+      QS_CONSULT_PORT: 8500
+      QS_ADDSVC_URL: addsvc:8021
+      QS_ZIPKIN_V2_URL: http://zipkin:9411/api/v2/spans
+    networks:
+      - gokitconsul_base_net
+    volumes:
+      - ./ssl:/ssl
+
   addsvc:
     image: cage1016/gokitconsul-addsvc:latest
     container_name: gokitconsul-addsvc
