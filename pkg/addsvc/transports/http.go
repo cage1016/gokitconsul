@@ -226,6 +226,10 @@ func decodeHTTPConcatResponse(_ context.Context, r *http.Response) (interface{},
 func encodeHTTPGenericResponse(ctx context.Context, w http.ResponseWriter, response interface{}) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if ar, ok := response.(endpoints.Response); ok {
+		if ar.Error() != nil {
+			encodeError(ctx, ar.Error(), w)
+			return nil
+		}
 		for k, v := range ar.Headers() {
 			w.Header().Set(k, v)
 		}

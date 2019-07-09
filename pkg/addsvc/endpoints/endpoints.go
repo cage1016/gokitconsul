@@ -64,7 +64,7 @@ func MakeSumEndpoint(svc service.AddsvcService) (ep endpoint.Endpoint) {
 	return func(ctx context.Context, request interface{}) (interface{}, error) {
 		req := request.(SumRequest)
 		if err := req.validate(); err != nil {
-			return nil, err
+			return SumResponse{Err: err}, nil
 		}
 		rs, err := svc.Sum(ctx, req.A, req.B)
 		return SumResponse{Rs: rs, Err: err}, nil
@@ -88,7 +88,7 @@ func MakeConcatEndpoint(svc service.AddsvcService) (ep endpoint.Endpoint) {
 	return func(ctx context.Context, request interface{}) (interface{}, error) {
 		req := request.(ConcatRequest)
 		if err := req.validate(); err != nil {
-			return nil, err
+			return ConcatResponse{Err: err}, nil
 		}
 		rs, err := svc.Concat(ctx, req.A, req.B)
 		return ConcatResponse{Rs: rs, Err: err}, nil

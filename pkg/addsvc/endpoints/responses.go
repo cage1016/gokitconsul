@@ -12,6 +12,7 @@ type Response interface {
 	Code() int
 	Headers() map[string]string
 	Empty() bool
+	Error() error
 }
 
 // SumResponse collects the response values for the Sum method.
@@ -32,6 +33,10 @@ func (r SumResponse) Empty() bool {
 	return false // TBA
 }
 
+func (r SumResponse) Error() error {
+	return r.Err
+}
+
 // ConcatResponse collects the response values for the Concat method.
 type ConcatResponse struct {
 	Rs  string `json:"rs"`
@@ -49,3 +54,8 @@ func (r ConcatResponse) Headers() map[string]string {
 func (r ConcatResponse) Empty() bool {
 	return false // TBA
 }
+
+func (r ConcatResponse) Error() error {
+	return r.Err
+}
+
