@@ -31,7 +31,7 @@ func New(svc service.FoosvcService, logger log.Logger, duration metrics.Histogra
 	{
 		method := "foo"
 		fooEndpoint = MakeFooEndpoint(svc)
-		fooEndpoint = ratelimit.NewErroringLimiter(rate.NewLimiter(rate.Every(time.Second), 1))(fooEndpoint)
+		fooEndpoint = ratelimit.NewErroringLimiter(rate.NewLimiter(rate.Every(time.Second), 100))(fooEndpoint)
 		fooEndpoint = circuitbreaker.Gobreaker(gobreaker.NewCircuitBreaker(gobreaker.Settings{}))(fooEndpoint)
 		fooEndpoint = opentracing.TraceServer(otTracer, method)(fooEndpoint)
 		fooEndpoint = zipkin.TraceEndpoint(zipkinTracer, method)(fooEndpoint)
