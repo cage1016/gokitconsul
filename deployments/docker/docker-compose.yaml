@@ -61,9 +61,6 @@ services:
       - gokitconsul_base_net
     volumes:
       - ./ssl:/ssl
-#    ports:
-#      - 8020:8020
-#      - 8021:8021
 
   gateway:
     image: cage1016/gokitconsul-gateway:latest

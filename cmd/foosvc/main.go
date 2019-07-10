@@ -8,13 +8,14 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/go-kit/kit/metrics"
 	"github.com/go-kit/kit/metrics/prometheus"
-	"github.com/go-kit/kit/sd"
 	kitgrpc "github.com/go-kit/kit/transport/grpc"
+	"github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"github.com/lightstep/lightstep-tracer-go"
 	stdopentracing "github.com/opentracing/opentracing-go"
 	zipkinot "github.com/openzipkin-contrib/zipkin-go-opentracing"
@@ -22,6 +23,7 @@ import (
 	zipkinhttp "github.com/openzipkin/zipkin-go/reporter/http"
 	stdprometheus "github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"sourcegraph.com/sourcegraph/appdash"
@@ -29,10 +31,11 @@ import (
 
 	pb "github.com/cage1016/gokitconsul/pb/foosvc"
 	addsvctransports "github.com/cage1016/gokitconsul/pkg/addsvc/transports"
-	"github.com/cage1016/gokitconsul/pkg/consulregister"
 	"github.com/cage1016/gokitconsul/pkg/foosvc/endpoints"
 	"github.com/cage1016/gokitconsul/pkg/foosvc/service"
 	"github.com/cage1016/gokitconsul/pkg/foosvc/transports"
+	"github.com/cage1016/gokitconsul/pkg/shared_package/grpclb"
+	"github.com/cage1016/gokitconsul/pkg/shared_package/grpcsr"
 )
 
 const (
@@ -52,7 +55,6 @@ const (
 	defServerKey      string = ""
 	defClientTLS      string = "false"
 	defCACerts        string = ""
-	defAddSvceURL     string = ""
 	envConsulHost     string = "QS_CONSULT_HOST"
 	envConsultPort    string = "QS_CONSULT_PORT"
 	envZipkinV1URL    string = "QS_ZIPKIN_V1_URL"
@@ -69,7 +71,6 @@ const (
 	envServerKey      string = "QS_FOOSVC_SERVER_KEY"
 	envClientTLS      string = "QS_FOOSVC_CLIENT_TLS"
 	envCACerts        string = "QS_FOOSVC_CA_CERTS"
-	envAddSvcURL      string = "QS_ADDSVC_URL"
 )
 
 type config struct {
@@ -89,7 +90,6 @@ type config struct {
 	zipkinV2URL    string `json:"zipkin_v2url"`
 	lightstepToken string `json:"lightstep_token"`
 	appdashAddr    string `json:"appdash_addr"`
-	addSvceURL     string
 }
 
 // Env reads specified environment variable. If no value has been found,
@@ -99,21 +99,6 @@ func env(key string, fallback string) (s0 string) {
 		return v
 	}
 	return fallback
-}
-
-func localIP() (s0 string) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return ""
-	}
-	for _, address := range addrs {
-		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
-			}
-		}
-	}
-	return ""
 }
 
 func main() {
@@ -126,30 +111,41 @@ func main() {
 	}
 	cfg := loadConfig(logger)
 
-	consulAddres := fmt.Sprintf("%s:%s", cfg.consulHost, cfg.consultPort)
-	serviceIp := localIP()
-	servicePort, _ := strconv.Atoi(cfg.grpcPort)
-	consulReg := consulregister.NewConsulRegister(consulAddres, cfg.serviceName, serviceIp, servicePort, []string{cfg.nameSpace, cfg.serviceName}, logger)
-	svcRegistar, err := consulReg.NewConsulGRPCRegister()
-	defer svcRegistar.Deregister()
-	if err != nil {
-		level.Error(logger).Log(
-			"consulAddres", consulAddres,
-			"serviceName", cfg.serviceName,
-			"serviceIp", serviceIp,
-			"servicePort", servicePort,
-			"tags", []string{cfg.nameSpace, cfg.serviceName},
-			"err", err,
-		)
+	// consul
+	{
+		if cfg.consulHost != "" && cfg.consultPort != "" {
+			consulAddres := fmt.Sprintf("%s:%s", cfg.consulHost, cfg.consultPort)
+			servicePort, _ := strconv.Atoi(cfg.grpcPort)
+			consulReg := grpcsr.NewConsulRegister(consulAddres, cfg.serviceName, servicePort, []string{cfg.nameSpace, cfg.serviceName}, logger)
+			svcRegistar, err := consulReg.NewConsulGRPCRegister()
+			defer svcRegistar.Deregister()
+			if err != nil {
+				level.Error(logger).Log(
+					"consulAddres", consulAddres,
+					"serviceName", cfg.serviceName,
+					"servicePort", servicePort,
+					"tags", []string{cfg.nameSpace, cfg.serviceName},
+					"err", err,
+				)
+			}
+			svcRegistar.Register()
+		}
 	}
 
-	conn := connectToAddsvc(cfg, logger)
-	defer conn.Close()
+	// addsvc grpc connection
+	var conn *grpc.ClientConn
+	{
+		if cfg.consulHost != "" && cfg.consultPort != "" {
+			consulAddres := fmt.Sprintf("%s:%s", cfg.consulHost, cfg.consultPort)
+			conn = connectToAddsvc(consulAddres, "grpc.health.v1.addsvc", logger)
+			defer conn.Close()
+		}
+	}
 
 	errs := make(chan error, 2)
 	grpcServer, httpHandler := NewServer(cfg, conn, logger)
 	go startHTTPServer(cfg, httpHandler, logger, errs)
-	go startGRPCServer(cfg, svcRegistar, grpcServer, logger, errs)
+	go startGRPCServer(cfg, grpcServer, logger, errs)
 
 	go func() {
 		c := make(chan os.Signal)
@@ -157,7 +153,7 @@ func main() {
 		errs <- fmt.Errorf("%s", <-c)
 	}()
 
-	err = <-errs
+	err := <-errs
 	level.Info(logger).Log("serviceName", cfg.serviceName, "terminated", err)
 }
 
@@ -183,7 +179,6 @@ func loadConfig(logger log.Logger) (cfg config) {
 	cfg.zipkinV2URL = env(envZipkinV2URL, defZipkinV2URL)
 	cfg.lightstepToken = env(envLightstepToken, defLightstepToken)
 	cfg.appdashAddr = env(envAppdashAddr, defAppdashAddr)
-	cfg.addSvceURL = env(envAddSvcURL, defAddSvceURL)
 	return cfg
 }
 
@@ -266,28 +261,28 @@ func NewServer(cfg config, conn *grpc.ClientConn, logger log.Logger) (pb.FoosvcS
 	return grpcServer, httpHandler
 }
 
-func connectToAddsvc(cfg config, logger log.Logger) *grpc.ClientConn {
-	var opts []grpc.DialOption
-	if cfg.clientTLS {
-		if cfg.caCerts != "" {
-			tpc, err := credentials.NewClientTLSFromFile(cfg.caCerts, "")
-			if err != nil {
-				level.Error(logger).Log("serviceName", cfg.serviceName, "tls", err)
-				os.Exit(1)
-			}
-			opts = append(opts, grpc.WithTransportCredentials(tpc))
-		}
-	} else {
-		opts = append(opts, grpc.WithInsecure())
-		level.Info(logger).Log("serviceName", cfg.serviceName, "gRPC", "communication is not encrypted")
-	}
-
-	conn, err := grpc.Dial(cfg.addSvceURL, opts...)
+func connectToAddsvc(consulAddres, svcName string, logger log.Logger) *grpc.ClientConn {
+	conn, err := grpc.Dial(
+		"",
+		grpc.WithInsecure(),
+		// 开启 grpc 中间件的重试功能
+		grpc.WithUnaryInterceptor(
+			grpc_retry.UnaryClientInterceptor(
+				grpc_retry.WithBackoff(grpc_retry.BackoffLinear(time.Duration(1)*time.Millisecond)),      // 重试间隔时间
+				grpc_retry.WithMax(3),                                                                    // 重试次数
+				grpc_retry.WithPerRetryTimeout(time.Duration(5)*time.Millisecond),                        // 重试时间
+				grpc_retry.WithCodes(codes.ResourceExhausted, codes.Unavailable, codes.DeadlineExceeded), // 返回码为如下值时重试
+			),
+		),
+		// 负载均衡，使用 consul 作服务发现
+		grpc.WithBalancer(grpc.RoundRobin(grpclb.NewConsulResolver(
+			consulAddres, svcName,
+		))),
+	)
 	if err != nil {
-		level.Error(logger).Log("serviceName", cfg.serviceName, "connect", cfg.addSvceURL, "error", err)
+		level.Error(logger).Log("serviceName", svcName, "error", err)
 		os.Exit(1)
 	}
-
 	return conn
 }
 
@@ -302,7 +297,7 @@ func startHTTPServer(cfg config, httpHandler http.Handler, logger log.Logger, er
 	}
 }
 
-func startGRPCServer(cfg config, registar sd.Registrar, grpcServer pb.FoosvcServer, logger log.Logger, errs chan error) {
+func startGRPCServer(cfg config, grpcServer pb.FoosvcServer, logger log.Logger, errs chan error) {
 	p := fmt.Sprintf(":%s", cfg.grpcPort)
 	listener, err := net.Listen("tcp", p)
 	if err != nil {
@@ -325,6 +320,5 @@ func startGRPCServer(cfg config, registar sd.Registrar, grpcServer pb.FoosvcServ
 	}
 	pb.RegisterFoosvcServer(server, grpcServer)
 	grpc_health_v1.RegisterHealthServer(server, &service.HealthImpl{})
-	registar.Register()
 	errs <- server.Serve(listener)
 }

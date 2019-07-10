@@ -13,7 +13,6 @@ import (
 	"github.com/go-kit/kit/log/level"
 	"github.com/go-kit/kit/metrics"
 	"github.com/go-kit/kit/metrics/prometheus"
-	"github.com/go-kit/kit/sd"
 	kitgrpc "github.com/go-kit/kit/transport/grpc"
 	"github.com/lightstep/lightstep-tracer-go"
 	stdopentracing "github.com/opentracing/opentracing-go"
@@ -31,7 +30,7 @@ import (
 	"github.com/cage1016/gokitconsul/pkg/addsvc/endpoints"
 	"github.com/cage1016/gokitconsul/pkg/addsvc/service"
 	"github.com/cage1016/gokitconsul/pkg/addsvc/transports"
-	"github.com/cage1016/gokitconsul/pkg/consulregister"
+	"github.com/cage1016/gokitconsul/pkg/shared_package/grpcsr"
 )
 
 const (
@@ -97,21 +96,6 @@ func env(key string, fallback string) (s0 string) {
 	return fallback
 }
 
-func localIP() (s0 string) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return ""
-	}
-	for _, address := range addrs {
-		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
-			}
-		}
-	}
-	return ""
-}
-
 func main() {
 	var logger log.Logger
 	{
@@ -122,27 +106,31 @@ func main() {
 	}
 	cfg := loadConfig(logger)
 
-	consulAddres := fmt.Sprintf("%s:%s", cfg.consulHost, cfg.consultPort)
-	serviceIp := localIP()
-	servicePort, _ := strconv.Atoi(cfg.grpcPort)
-	consulReg := consulregister.NewConsulRegister(consulAddres, cfg.serviceName, serviceIp, servicePort, []string{cfg.nameSpace, cfg.serviceName}, logger)
-	svcRegistar, err := consulReg.NewConsulGRPCRegister()
-	defer svcRegistar.Deregister()
-	if err != nil {
-		level.Error(logger).Log(
-			"consulAddres", consulAddres,
-			"serviceName", cfg.serviceName,
-			"serviceIp", serviceIp,
-			"servicePort", servicePort,
-			"tags", []string{cfg.nameSpace, cfg.serviceName},
-			"err", err,
-		)
+	// consul
+	{
+		if cfg.consulHost != "" && cfg.consultPort != "" {
+			consulAddres := fmt.Sprintf("%s:%s", cfg.consulHost, cfg.consultPort)
+			servicePort, _ := strconv.Atoi(cfg.grpcPort)
+			consulReg := grpcsr.NewConsulRegister(consulAddres, cfg.serviceName, servicePort, []string{cfg.nameSpace, cfg.serviceName}, logger)
+			svcRegistar, err := consulReg.NewConsulGRPCRegister()
+			defer svcRegistar.Deregister()
+			if err != nil {
+				level.Error(logger).Log(
+					"consulAddres", consulAddres,
+					"serviceName", cfg.serviceName,
+					"servicePort", servicePort,
+					"tags", []string{cfg.nameSpace, cfg.serviceName},
+					"err", err,
+				)
+			}
+			svcRegistar.Register()
+		}
 	}
 
 	errs := make(chan error, 2)
 	grpcServer, httpHandler := NewServer(cfg, logger)
 	go startHTTPServer(cfg, httpHandler, logger, errs)
-	go startGRPCServer(cfg, svcRegistar, grpcServer, logger, errs)
+	go startGRPCServer(cfg, grpcServer, logger, errs)
 
 	go func() {
 		c := make(chan os.Signal)
@@ -150,7 +138,7 @@ func main() {
 		errs <- fmt.Errorf("%s", <-c)
 	}()
 
-	err = <-errs
+	err := <-errs
 	level.Info(logger).Log("serviceName", cfg.serviceName, "terminated", err)
 }
 
@@ -268,7 +256,7 @@ func startHTTPServer(cfg config, httpHandler http.Handler, logger log.Logger, er
 	}
 }
 
-func startGRPCServer(cfg config, registar sd.Registrar, grpcServer pb.AddsvcServer, logger log.Logger, errs chan error) {
+func startGRPCServer(cfg config, grpcServer pb.AddsvcServer, logger log.Logger, errs chan error) {
 	p := fmt.Sprintf(":%s", cfg.grpcPort)
 	listener, err := net.Listen("tcp", p)
 	if err != nil {
@@ -291,6 +279,5 @@ func startGRPCServer(cfg config, registar sd.Registrar, grpcServer pb.AddsvcServ
 	}
 	pb.RegisterAddsvcServer(server, grpcServer)
 	grpc_health_v1.RegisterHealthServer(server, &service.HealthImpl{})
-	registar.Register()
 	errs <- server.Serve(listener)
 }

@@ -1,7 +1,8 @@
-package consulregister
+package grpcsr
 
 import (
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/go-kit/kit/log"
@@ -10,9 +11,8 @@ import (
 )
 
 type ConsulRegister struct {
-	ConsulAddress                  string // consul address
-	ServiceName                    string // service name
-	ServiceIP                      string
+	ConsulAddress                  string   // consul address
+	ServiceName                    string   // service name
 	Tags                           []string // consul tags
 	ServicePort                    int      //service port
 	DeregisterCriticalServiceAfter time.Duration
@@ -20,11 +20,10 @@ type ConsulRegister struct {
 	logger                         log.Logger
 }
 
-func NewConsulRegister(consulAddress, serviceName, serviceIP string, servicePort int, tags []string, logger log.Logger) *ConsulRegister {
+func NewConsulRegister(consulAddress, serviceName string, servicePort int, tags []string, logger log.Logger) *ConsulRegister {
 	return &ConsulRegister{
 		ConsulAddress:                  consulAddress,
 		ServiceName:                    serviceName,
-		ServiceIP:                      serviceIP,
 		Tags:                           tags,
 		ServicePort:                    servicePort,
 		DeregisterCriticalServiceAfter: time.Duration(1) * time.Minute,
@@ -44,20 +43,36 @@ func (r *ConsulRegister) NewConsulGRPCRegister() (*consulsd.Registrar, error) {
 	}
 	client := consulsd.NewClient(consulClient)
 
+	IP := localIP()
 	reg := &api.AgentServiceRegistration{
-		ID:      fmt.Sprintf("%v-%v-%v", r.ServiceName, r.ServiceIP, r.ServicePort),
+		ID:      fmt.Sprintf("%v-%v-%v", r.ServiceName, IP, r.ServicePort),
 		Name:    fmt.Sprintf("grpc.health.v1.%v", r.ServiceName),
 		Tags:    r.Tags,
 		Port:    r.ServicePort,
-		Address: r.ServiceIP,
+		Address: IP,
 		Check: &api.AgentServiceCheck{
 			// 健康检查间隔
 			Interval: r.Interval.String(),
 			//grpc 支持，执行健康检查的地址，service 会传到 Health.Check 函数中
-			GRPC: fmt.Sprintf("%v:%v/%v", r.ServiceIP, r.ServicePort, r.ServiceName),
+			GRPC: fmt.Sprintf("%v:%v/%v", IP, r.ServicePort, r.ServiceName),
 			// 注销时间，相当于过期时间
 			DeregisterCriticalServiceAfter: r.DeregisterCriticalServiceAfter.String(),
 		},
 	}
 	return consulsd.NewRegistrar(client, reg, r.logger), nil
+}
+
+func localIP() (s0 string) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, address := range addrs {
+		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return ""
 }
