@@ -8,7 +8,7 @@
   </a>
 </p>
 
-> go kit microservice demo with consul
+> go kit microservice demo with consul & zipkin
 
 ## Dependency
 
@@ -25,6 +25,10 @@
 ## Install
 
 ```sh
+# build docker image form bindary
+make rebuilds
+
+# clear build (options)
 make dockers
 ```
 
@@ -66,13 +70,28 @@ $ curl -X "POST" "https://localhost:8000/addsvc/concat" -H 'Content-Type: applic
 
 # foo
 $ curl -X "POST" "https://localhost:8000/foosvc/foo" -H 'Content-Type: application/json; charset=utf-8' -d $'{ "s": "😆"}'
-{"res":"hello 😆","err":null}
+{"res":"😆","err":null}
 
+$ curl -X "POST" "https://localhost:8000/foosvc/foo" -H 'Content-Type: application/json; charset=utf-8' -d $'{ "s": "hello gokit 😆"}'
+{"error":"result exceeds maximum size"}
 ```
+
+## Consul & zipkin
+
+_consult_
+visit http://localhost:8500
+![Consul](./screenshots/consul.jpg)
+
+_zipkin_
+visit http://localhost:9411
+![zipkin success](./screenshots/zipkin.jpg)
+
+![zipkin bad request](./screenshots/zipkin2.jpg)
 
 ## Stop
 
 ```sh
+# docker-compose down
 $ make d
 ```
 
