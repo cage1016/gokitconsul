@@ -10,5 +10,5 @@ type FooRequest struct {
 }
 
 func (r FooRequest) validate() error {
-	return nil // TBA
+	return nil
 }

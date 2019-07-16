@@ -2,12 +2,8 @@ package transports
 
 import (
 	"context"
-	"errors"
 	"time"
 
-	pb "github.com/cage1016/gokitconsul/pb/foosvc"
-	"github.com/cage1016/gokitconsul/pkg/foosvc/endpoints"
-	"github.com/cage1016/gokitconsul/pkg/foosvc/service"
 	"github.com/go-kit/kit/circuitbreaker"
 	"github.com/go-kit/kit/endpoint"
 	"github.com/go-kit/kit/log"
@@ -20,6 +16,12 @@ import (
 	"github.com/sony/gobreaker"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	pb "github.com/cage1016/gokitconsul/pb/foosvc"
+	"github.com/cage1016/gokitconsul/pkg/foosvc/endpoints"
+	"github.com/cage1016/gokitconsul/pkg/foosvc/service"
 )
 
 type grpcServer struct {
@@ -29,10 +31,10 @@ type grpcServer struct {
 func (s *grpcServer) Foo(ctx context.Context, req *pb.FooRequest) (rep *pb.FooReply, err error) {
 	_, rp, err := s.foo.ServeGRPC(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, grpcEncodeError(err)
 	}
 	rep = rp.(*pb.FooReply)
-	return rep, err
+	return rep, nil
 }
 
 // MakeGRPCServer makes a set of endpoints available as a gRPC server.
@@ -67,15 +69,13 @@ func MakeGRPCServer(endpoints endpoints.Endpoints, otTracer stdopentracing.Trace
 func decodeGRPCFooRequest(_ context.Context, grpcReq interface{}) (interface{}, error) {
 	req := grpcReq.(*pb.FooRequest)
 	return endpoints.FooRequest{S: req.S}, nil
-
 }
 
 // encodeGRPCFooResponse is a transport/grpc.EncodeResponseFunc that converts a
 // user-domain response to a gRPC reply. Primarily useful in a server.
 func encodeGRPCFooResponse(_ context.Context, grpcReply interface{}) (res interface{}, err error) {
 	reply := grpcReply.(endpoints.FooResponse)
-	return &pb.FooReply{Res: reply.Res, Err: err2str(reply.Err)}, nil
-
+	return &pb.FooReply{Res: reply.Res}, grpcEncodeError(reply.Err)
 }
 
 // NewGRPCClient returns an AddService backed by a gRPC server at the other end
@@ -134,29 +134,26 @@ func NewGRPCClient(conn *grpc.ClientConn, otTracer stdopentracing.Tracer, zipkin
 func encodeGRPCFooRequest(_ context.Context, request interface{}) (interface{}, error) {
 	req := request.(endpoints.FooRequest)
 	return &pb.FooRequest{S: req.S}, nil
-
 }
 
 // decodeGRPCFooResponse is a transport/grpc.DecodeResponseFunc that converts a
 // gRPC Foo reply to a user-domain Foo response. Primarily useful in a client.
 func decodeGRPCFooResponse(_ context.Context, grpcReply interface{}) (interface{}, error) {
 	reply := grpcReply.(*pb.FooReply)
-	return endpoints.FooResponse{Res: reply.Res, Err: str2err(reply.Err)}, nil
-
+	return endpoints.FooResponse{Res: reply.Res}, nil
 }
 
-//
-func str2err(s string) error {
-	if s == "" {
+func grpcEncodeError(err error) error {
+	if err == nil {
 		return nil
 	}
-	return errors.New(s)
-}
 
-//
-func err2str(err error) string {
-	if err == nil {
-		return ""
+	st, ok := status.FromError(err)
+	if ok {
+		return status.Error(st.Code(), st.Message())
 	}
-	return err.Error()
+	switch err {
+	default:
+		return status.Error(codes.Internal, "internal server error")
+	}
 }

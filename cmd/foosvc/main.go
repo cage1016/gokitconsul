@@ -39,8 +39,8 @@ import (
 )
 
 const (
-	defConsulHost     string = "localhost"
-	defConsulPort     string = "8500"
+	defConsulHost     string = ""
+	defConsulPort     string = ""
 	defZipkinV1URL    string = ""
 	defZipkinV2URL    string = ""
 	defLightstepToken string = ""
@@ -61,8 +61,8 @@ const (
 	envZipkinV2URL    string = "QS_ZIPKIN_V2_URL"
 	envLightstepToken string = "QS_LIGHT_STEP_TOKEN"
 	envAppdashAddr    string = "QS_APPDASH_ADDR"
-	envNameSpace      string = "QS_foosvc_NAMESPACE"
-	envServiceName    string = "QS_foosvc_SERVICE_NAME"
+	envNameSpace      string = "QS_FOOSVC_NAMESPACE"
+	envServiceName    string = "QS_FOOSVC_SERVICE_NAME"
 	envLogLevel       string = "QS_FOOSVC_LOG_LEVEL"
 	envServiceHost    string = "QS_FOOSVC_SERVICE_HOST"
 	envHTTPPort       string = "QS_FOOSVC_HTTP_PORT"
@@ -94,7 +94,7 @@ type config struct {
 
 // Env reads specified environment variable. If no value has been found,
 // fallback is returned.
-func env(key string, fallback string) (s0 string) {
+func env(key string, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}

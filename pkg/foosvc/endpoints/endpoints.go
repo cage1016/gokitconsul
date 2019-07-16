@@ -49,10 +49,10 @@ func MakeFooEndpoint(svc service.FoosvcService) (ep endpoint.Endpoint) {
 	return func(ctx context.Context, request interface{}) (interface{}, error) {
 		req := request.(FooRequest)
 		if err := req.validate(); err != nil {
-			return FooResponse{Err: err}, err
+			return FooResponse{}, err
 		}
 		res, err := svc.Foo(ctx, req.S)
-		return FooResponse{Res: res, Err: err}, nil
+		return FooResponse{Res: res}, err
 	}
 }
 
@@ -64,5 +64,5 @@ func (e Endpoints) Foo(ctx context.Context, s string) (res string, err error) {
 		return
 	}
 	response := resp.(FooResponse)
-	return response.Res, response.Err
+	return response.Res, nil
 }

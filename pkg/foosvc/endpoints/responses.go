@@ -11,7 +11,6 @@ type Response interface {
 	Code() int
 	Headers() map[string]string
 	Empty() bool
-	Error() error
 }
 
 // FooResponse collects the response values for the Foo method.
@@ -30,8 +29,4 @@ func (r FooResponse) Headers() map[string]string {
 
 func (r FooResponse) Empty() bool {
 	return false // TBA
-}
-
-func (r FooResponse) Error() error {
-	return r.Err
 }

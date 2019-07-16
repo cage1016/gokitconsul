@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/metrics"
 
@@ -39,5 +38,5 @@ func New(addsvc addsvcservice.AddsvcService, logger log.Logger, requestCount met
 
 // Implement the business logic of Foo
 func (fo *stubFoosvcService) Foo(ctx context.Context, s string) (res string, err error) {
-	return fo.addsvc.Concat(ctx, "hello ", s)
+	return fo.addsvc.Concat(ctx, "", s)
 }
