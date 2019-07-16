@@ -2,7 +2,6 @@ package transports
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/go-kit/kit/circuitbreaker"
@@ -17,6 +16,8 @@ import (
 	"github.com/sony/gobreaker"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/cage1016/gokitconsul/pb/addsvc"
 	"github.com/cage1016/gokitconsul/pkg/addsvc/endpoints"
@@ -31,19 +32,19 @@ type grpcServer struct {
 func (s *grpcServer) Sum(ctx context.Context, req *pb.SumRequest) (rep *pb.SumReply, err error) {
 	_, rp, err := s.sum.ServeGRPC(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, grpcEncodeError(err)
 	}
 	rep = rp.(*pb.SumReply)
-	return rep, err
+	return rep, nil
 }
 
 func (s *grpcServer) Concat(ctx context.Context, req *pb.ConcatRequest) (rep *pb.ConcatReply, err error) {
 	_, rp, err := s.concat.ServeGRPC(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, grpcEncodeError(err)
 	}
 	rep = rp.(*pb.ConcatReply)
-	return rep, err
+	return rep, nil
 }
 
 // MakeGRPCServer makes a set of endpoints available as a gRPC server.
@@ -85,15 +86,13 @@ func MakeGRPCServer(endpoints endpoints.Endpoints, otTracer stdopentracing.Trace
 func decodeGRPCSumRequest(_ context.Context, grpcReq interface{}) (interface{}, error) {
 	req := grpcReq.(*pb.SumRequest)
 	return endpoints.SumRequest{A: req.A, B: req.B}, nil
-
 }
 
 // encodeGRPCSumResponse is a transport/grpc.EncodeResponseFunc that converts a
 // user-domain response to a gRPC reply. Primarily useful in a server.
 func encodeGRPCSumResponse(_ context.Context, grpcReply interface{}) (res interface{}, err error) {
 	reply := grpcReply.(endpoints.SumResponse)
-	return &pb.SumReply{Rs: reply.Rs, Err: err2str(reply.Err)}, nil
-
+	return &pb.SumReply{Rs: reply.Rs}, grpcEncodeError(reply.Err)
 }
 
 // decodeGRPCConcatRequest is a transport/grpc.DecodeRequestFunc that converts a
@@ -101,15 +100,13 @@ func encodeGRPCSumResponse(_ context.Context, grpcReply interface{}) (res interf
 func decodeGRPCConcatRequest(_ context.Context, grpcReq interface{}) (interface{}, error) {
 	req := grpcReq.(*pb.ConcatRequest)
 	return endpoints.ConcatRequest{A: req.A, B: req.B}, nil
-
 }
 
 // encodeGRPCConcatResponse is a transport/grpc.EncodeResponseFunc that converts a
 // user-domain response to a gRPC reply. Primarily useful in a server.
 func encodeGRPCConcatResponse(_ context.Context, grpcReply interface{}) (res interface{}, err error) {
 	reply := grpcReply.(endpoints.ConcatResponse)
-	return &pb.ConcatReply{Rs: reply.Rs, Err: err2str(reply.Err)}, nil
-
+	return &pb.ConcatReply{Rs: reply.Rs}, grpcEncodeError(reply.Err)
 }
 
 // NewGRPCClient returns an AddService backed by a gRPC server at the other end
@@ -190,15 +187,13 @@ func NewGRPCClient(conn *grpc.ClientConn, otTracer stdopentracing.Tracer, zipkin
 func encodeGRPCSumRequest(_ context.Context, request interface{}) (interface{}, error) {
 	req := request.(endpoints.SumRequest)
 	return &pb.SumRequest{A: req.A, B: req.B}, nil
-
 }
 
 // decodeGRPCSumResponse is a transport/grpc.DecodeResponseFunc that converts a
 // gRPC Sum reply to a user-domain Sum response. Primarily useful in a client.
 func decodeGRPCSumResponse(_ context.Context, grpcReply interface{}) (interface{}, error) {
 	reply := grpcReply.(*pb.SumReply)
-	return endpoints.SumResponse{Rs: reply.Rs, Err: str2err(reply.Err)}, nil
-
+	return endpoints.SumResponse{Rs: reply.Rs}, nil
 }
 
 // encodeGRPCConcatRequest is a transport/grpc.EncodeRequestFunc that converts a
@@ -206,29 +201,28 @@ func decodeGRPCSumResponse(_ context.Context, grpcReply interface{}) (interface{
 func encodeGRPCConcatRequest(_ context.Context, request interface{}) (interface{}, error) {
 	req := request.(endpoints.ConcatRequest)
 	return &pb.ConcatRequest{A: req.A, B: req.B}, nil
-
 }
 
 // decodeGRPCConcatResponse is a transport/grpc.DecodeResponseFunc that converts a
 // gRPC Concat reply to a user-domain Concat response. Primarily useful in a client.
 func decodeGRPCConcatResponse(_ context.Context, grpcReply interface{}) (interface{}, error) {
 	reply := grpcReply.(*pb.ConcatReply)
-	return endpoints.ConcatResponse{Rs: reply.Rs, Err: str2err(reply.Err)}, nil
-
+	return endpoints.ConcatResponse{Rs: reply.Rs}, nil
 }
 
-//
-func str2err(s string) error {
-	if s == "" {
+func grpcEncodeError(err error) error {
+	if err == nil {
 		return nil
 	}
-	return errors.New(s)
-}
 
-//
-func err2str(err error) string {
-	if err == nil {
-		return ""
+	st, ok := status.FromError(err)
+	if ok {
+		return status.Error(st.Code(), st.Message())
 	}
-	return err.Error()
+	switch err {
+	case service.ErrTwoZeroes, service.ErrMaxSizeExceeded, service.ErrIntOverflow:
+		return status.Error(codes.InvalidArgument, err.Error())
+	default:
+		return status.Error(codes.Internal, "internal server error")
+	}
 }

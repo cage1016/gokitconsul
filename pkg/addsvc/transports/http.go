@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/go-kit/kit/sd/lb"
+	"google.golang.org/grpc/status"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -33,6 +36,18 @@ type errorWrapper struct {
 	Error string `json:"error"`
 }
 
+func JSONErrorDecoder(r *http.Response) error {
+	contentType := r.Header.Get("Content-Type")
+	if !strings.Contains(contentType, "application/json") {
+		return fmt.Errorf("expected JSON formatted error, got Content-Type %s", contentType)
+	}
+	var w errorWrapper
+	if err := json.NewDecoder(r.Body).Decode(&w); err != nil {
+		return err
+	}
+	return errors.New(w.Error)
+}
+
 // NewHTTPHandler returns a handler that makes a set of endpoints available on
 // predefined paths.
 func NewHTTPHandler(endpoints endpoints.Endpoints, otTracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, logger log.Logger) http.Handler { // Zipkin HTTP Server Trace can either be instantiated per endpoint with a
@@ -43,7 +58,7 @@ func NewHTTPHandler(endpoints endpoints.Endpoints, otTracer stdopentracing.Trace
 	zipkinServer := zipkin.HTTPServerTrace(zipkinTracer)
 
 	options := []httptransport.ServerOption{
-		httptransport.ServerErrorEncoder(encodeError),
+		httptransport.ServerErrorEncoder(httpEncodeError),
 		httptransport.ServerErrorLogger(logger),
 		zipkinServer,
 	}
@@ -190,7 +205,7 @@ func encodeHTTPSumRequest(_ context.Context, r *http.Request, request interface{
 // the specific error message from the response body. Primarily useful in a client.
 func decodeHTTPSumResponse(_ context.Context, r *http.Response) (interface{}, error) {
 	if r.StatusCode != http.StatusOK {
-		return nil, errors.New(r.Status)
+		return nil, JSONErrorDecoder(r)
 	}
 	var resp endpoints.SumResponse
 	err := json.NewDecoder(r.Body).Decode(&resp)
@@ -214,7 +229,7 @@ func encodeHTTPConcatRequest(_ context.Context, r *http.Request, request interfa
 // the specific error message from the response body. Primarily useful in a client.
 func decodeHTTPConcatResponse(_ context.Context, r *http.Response) (interface{}, error) {
 	if r.StatusCode != http.StatusOK {
-		return nil, errors.New(r.Status)
+		return nil, JSONErrorDecoder(r)
 	}
 	var resp endpoints.ConcatResponse
 	err := json.NewDecoder(r.Body).Decode(&resp)
@@ -226,10 +241,6 @@ func decodeHTTPConcatResponse(_ context.Context, r *http.Response) (interface{},
 func encodeHTTPGenericResponse(ctx context.Context, w http.ResponseWriter, response interface{}) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if ar, ok := response.(endpoints.Response); ok {
-		if ar.Error() != nil {
-			encodeError(ctx, ar.Error(), w)
-			return nil
-		}
 		for k, v := range ar.Headers() {
 			w.Header().Set(k, v)
 		}
@@ -241,25 +252,37 @@ func encodeHTTPGenericResponse(ctx context.Context, w http.ResponseWriter, respo
 	return json.NewEncoder(w).Encode(response)
 }
 
-func encodeError(_ context.Context, err error, w http.ResponseWriter) {
-	switch err {
-	case io.ErrUnexpectedEOF:
-		w.WriteHeader(http.StatusBadRequest)
-	case io.EOF:
-		w.WriteHeader(http.StatusBadRequest)
-	case service.ErrTwoZeroes, service.ErrMaxSizeExceeded, service.ErrIntOverflow:
-		w.WriteHeader(http.StatusBadRequest)
-	default:
-		switch err.(type) {
-		case *json.SyntaxError:
-			w.WriteHeader(http.StatusBadRequest)
-		case *json.UnmarshalTypeError:
-			w.WriteHeader(http.StatusBadRequest)
-		default:
-			w.WriteHeader(http.StatusInternalServerError)
+func httpEncodeError(_ context.Context, err error, w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if lberr, ok := err.(lb.RetryError); ok {
+		st, _ := status.FromError(lberr.Final)
+		w.WriteHeader(HTTPStatusFromCode(st.Code()))
+		json.NewEncoder(w).Encode(errorWrapper{Error: st.Message()})
+	} else {
+		st, ok := status.FromError(err)
+		if ok {
+			w.WriteHeader(HTTPStatusFromCode(st.Code()))
+			json.NewEncoder(w).Encode(errorWrapper{Error: st.Message()})
+		} else {
+			switch err {
+			case io.ErrUnexpectedEOF:
+				w.WriteHeader(http.StatusBadRequest)
+			case io.EOF:
+				w.WriteHeader(http.StatusBadRequest)
+			case service.ErrTwoZeroes, service.ErrMaxSizeExceeded, service.ErrIntOverflow:
+				w.WriteHeader(http.StatusBadRequest)
+			default:
+				switch err.(type) {
+				case *json.SyntaxError:
+					w.WriteHeader(http.StatusBadRequest)
+				case *json.UnmarshalTypeError:
+					w.WriteHeader(http.StatusBadRequest)
+				default:
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			}
+			json.NewEncoder(w).Encode(errorWrapper{Error: err.Error()})
 		}
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(errorWrapper{Error: err.Error()})
 }

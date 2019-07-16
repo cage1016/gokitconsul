@@ -34,8 +34,8 @@ import (
 )
 
 const (
-	defConsulHost     string = "localhost"
-	defConsulPort     string = "8500"
+	defConsulHost     string = ""
+	defConsulPort     string = ""
 	defZipkinV1URL    string = ""
 	defZipkinV2URL    string = ""
 	defLightstepToken string = ""
@@ -89,7 +89,7 @@ type config struct {
 
 // Env reads specified environment variable. If no value has been found,
 // fallback is returned.
-func env(key string, fallback string) (s0 string) {
+func env(key string, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
