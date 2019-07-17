@@ -15,6 +15,8 @@
 - consul as discover service
 - zipkin as trace service
 - gateway
+    - http → grpc (8000)
+    - grpc proxy (8001)
 
 ## Services
 
@@ -49,12 +51,11 @@ Creating gokitconsul-gateway ... done
 
 $ docker ps
 CONTAINER ID        IMAGE                                 COMMAND                  CREATED             STATUS              PORTS                                                                                                            NAMES
-57157cdc19dd        cage1016/gokitconsul-foosvc:latest    "/exe"                   10 minutes ago      Up 10 minutes                                                                                                                        gokitconsul-foosvc
-29f808c19f2b        cage1016/gokitconsul-gateway:latest   "/exe"                   10 minutes ago      Up 10 minutes       0.0.0.0:8000->8000/tcp                                                                                           gokitconsul-gateway
-6865dd7727c4        cage1016/gokitconsul-addsvc:latest    "/exe"                   10 minutes ago      Up 10 minutes                                                                                                                        gokitconsul-addsvc
-71a8bdaba125        openzipkin/zipkin                     "/busybox/sh run.sh"     10 minutes ago      Up 10 minutes       9410/tcp, 0.0.0.0:9411->9411/tcp                                                                                 gokitconsul-zipkin
-fcb3a785dd6c        consul:1.5.1                          "docker-entrypoint.s…"   10 minutes ago      Up 10 minutes       0.0.0.0:8400->8400/tcp, 8301-8302/udp, 0.0.0.0:8500->8500/tcp, 8300-8302/tcp, 8600/udp, 0.0.0.0:8600->8600/tcp   gokitconsul-consul
-
+da530fa40f49        cage1016/gokitconsul-gateway:latest   "/exe"                   5 seconds ago       Up 3 seconds        0.0.0.0:8000-8001->8000-8001/tcp                                                                                 gokitconsul-gateway
+1dc81d7fff48        cage1016/gokitconsul-foosvc:latest    "/exe"                   5 seconds ago       Up 3 seconds                                                                                                                         gokitconsul-foosvc
+c10103d7f730        cage1016/gokitconsul-addsvc:latest    "/exe"                   6 seconds ago       Up 4 seconds                                                                                                                         gokitconsul-addsvc
+22a977ac5008        consul:1.5.1                          "docker-entrypoint.s…"   7 seconds ago       Up 5 seconds        0.0.0.0:8400->8400/tcp, 8301-8302/udp, 0.0.0.0:8500->8500/tcp, 8300-8302/tcp, 8600/udp, 0.0.0.0:8600->8600/tcp   gokitconsul-consul
+24379e34597d        openzipkin/zipkin                     "/busybox/sh run.sh"     7 seconds ago       Up 6 seconds        9410/tcp, 0.0.0.0:9411->9411/tcp
 ```
 
 ## Test
@@ -70,10 +71,21 @@ $ curl -X "POST" "https://localhost:8000/addsvc/concat" -H 'Content-Type: applic
 
 # foo
 $ curl -X "POST" "https://localhost:8000/foosvc/foo" -H 'Content-Type: application/json; charset=utf-8' -d $'{ "s": "😆"}'
-{"res":"😆","err":null}
+{"res":"foo 😆","err":null}
 
 $ curl -X "POST" "https://localhost:8000/foosvc/foo" -H 'Content-Type: application/json; charset=utf-8' -d $'{ "s": "hello gokit 😆"}'
 {"error":"result exceeds maximum size"}
+
+# addcli through grpc proxy
+$ go run cmd/addcli/main.go -grpc-addr localhost:8001 -method sum 1 22
+1 + 22 = 23
+
+$ go run cmd/addcli/main.go -grpc-addr localhost:8001 -method concat 1 22
+"1" + "22" = "122"
+
+# foocli throuth grpc proxy
+$ go run cmd/foocli/main.go -grpc-addr localhost:8001 world
+Foo world = foo world
 ```
 
 ## Consul & zipkin

@@ -3,33 +3,47 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/go-kit/kit/sd/consul"
 	consulsd "github.com/go-kit/kit/sd/consul"
+	kitgrpc "github.com/go-kit/kit/transport/grpc"
+	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
+	"github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
 	"github.com/hashicorp/consul/api"
 	"github.com/lightstep/lightstep-tracer-go"
+	"github.com/mwitkow/grpc-proxy/proxy"
 	stdopentracing "github.com/opentracing/opentracing-go"
 	zipkinot "github.com/openzipkin-contrib/zipkin-go-opentracing"
 	"github.com/openzipkin/zipkin-go"
 	opzipkin "github.com/openzipkin/zipkin-go"
 	zipkinhttp "github.com/openzipkin/zipkin-go/reporter/http"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	"sourcegraph.com/sourcegraph/appdash"
 	appdashot "sourcegraph.com/sourcegraph/appdash/opentracing"
 
 	"github.com/cage1016/gokitconsul/pkg/gateway/gatewaytransport"
+	"github.com/cage1016/gokitconsul/pkg/shared_package/grpclb"
 )
 
 const (
 	serviceName       = "gateway"
 	defLogLevel       = "error"
 	defHTTPPort       = "8000"
+	defGRPCPort       = "8001"
 	defRretryTimeout  = "500" // time.Millisecond
 	defRretryMax      = "3"
 	defServerCert     = ""
@@ -43,6 +57,7 @@ const (
 	defConsulPort     = "8500"
 	envLogLevel       = "QS_GATEWAY_LOG_LEVEL"
 	envHTTPPort       = "QS_GATEWAY_HTTP_PORT"
+	envGRPCPort       = "QS_GATEWAY_GRPC_PORT"
 	envClientTLS      = "QS_GATEWAY_CLIENT_TLS"
 	envServerCert     = "QS_GATEWAY_SERVER_CERT"
 	envServerKey      = "QS_GATEWAY_SERVER_KEY"
@@ -71,6 +86,7 @@ type config struct {
 	consulHost     string
 	consultPort    string
 	httpPort       string
+	grpcPort       string
 	serverCert     string
 	serverKey      string
 	retryMax       int64
@@ -148,9 +164,11 @@ func main() {
 	}
 
 	ctx := context.Background()
-	errs := make(chan error, 1)
+	consultAddress := fmt.Sprintf("%s:%s", cfg.consulHost, cfg.consultPort)
+	errs := make(chan error, 2)
 
 	go startHTTPServer(ctx, client, cfg.retryMax, cfg.retryTimeout, tracer, zipkinTracer, cfg.httpPort, cfg.serverCert, cfg.serverKey, logger, errs)
+	go startGRPCServer(consultAddress, tracer, zipkinTracer, cfg.grpcPort, cfg.serverCert, cfg.serverKey, logger, errs)
 
 	go func() {
 		c := make(chan os.Signal)
@@ -181,6 +199,7 @@ func loadConfig(logger log.Logger) (cfg config) {
 	cfg.logLevel = env(envLogLevel, defLogLevel)
 	cfg.clientTLS = tls
 	cfg.httpPort = env(envHTTPPort, defHTTPPort)
+	cfg.grpcPort = env(envGRPCPort, defGRPCPort)
 	cfg.serverCert = env(envServerCert, defServerCert)
 	cfg.serverKey = env(envServerKey, defServerKey)
 	cfg.consulHost = env(envConsulHost, defConsulHost)
@@ -220,4 +239,74 @@ func startHTTPServer(ctx context.Context, client consul.Client, retryMax, retryT
 		level.Info(logger).Log("serviceName", serviceName, "protocol", "HTTP", "exposed", port)
 		errs <- http.ListenAndServe(p, gatewaytransport.MakeHandler(ctx, client, retryMax, retryTimeout, tracer, zipkinTracer, logger))
 	}
+}
+
+func startGRPCServer(consultAddress string, tracer stdopentracing.Tracer, zipkinTracer *opzipkin.Tracer, port string, certFile string, keyFile string, logger log.Logger, errs chan error) {
+	p := fmt.Sprintf(":%s", port)
+	listener, err := net.Listen("tcp", p)
+	if err != nil {
+		level.Error(logger).Log("GRPC", "proxy", "listen", port, "err", err)
+		os.Exit(1)
+	}
+
+	re := regexp.MustCompile(`([a-zA-Z]+)/`)
+	director := func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
+		serviceName := func(fullMethodName string) string {
+			x := re.FindSubmatch([]byte(fullMethodName))
+			return fmt.Sprintf("grpc.health.v1.%v", strings.ToLower(string(x[1])))
+		}(fullMethodName)
+
+		// Make sure we never forward internal services.
+		if strings.HasPrefix(fullMethodName, "/com.example.internal.") {
+			return nil, nil, grpc.Errorf(codes.Unimplemented, "Unknown method")
+		}
+		md, ok := metadata.FromIncomingContext(ctx)
+		// Copy the inbound metadata explicitly.
+		outCtx, _ := context.WithCancel(ctx)
+		outCtx = metadata.NewOutgoingContext(outCtx, md.Copy())
+		if ok {
+			conn, err := grpc.DialContext(
+				ctx,
+				"",
+				grpc.WithInsecure(),
+				grpc.WithUnaryInterceptor(otgrpc.OpenTracingClientInterceptor(tracer)),
+				grpc.WithUnaryInterceptor(
+					grpc_retry.UnaryClientInterceptor(
+						grpc_retry.WithBackoff(grpc_retry.BackoffLinear(time.Duration(1)*time.Millisecond)),
+						grpc_retry.WithMax(3),
+						grpc_retry.WithPerRetryTimeout(time.Duration(5)*time.Millisecond),
+						grpc_retry.WithCodes(codes.ResourceExhausted, codes.Unavailable, codes.DeadlineExceeded),
+					),
+				),
+				grpc.WithDefaultCallOptions(grpc.CallCustomCodec(proxy.Codec()), grpc.FailFast(false)),
+				grpc.WithBalancer(grpc.RoundRobin(grpclb.NewConsulResolver(consultAddress, serviceName))),
+			)
+			return outCtx, conn, err
+		}
+		return nil, nil, grpc.Errorf(codes.Unimplemented, "Unknown method")
+	}
+
+	var server *grpc.Server
+	if certFile != "" || keyFile != "" {
+		creds, err := credentials.NewServerTLSFromFile(certFile, keyFile)
+		if err != nil {
+			level.Error(logger).Log("certificates", creds, "err", err)
+			os.Exit(1)
+		}
+		level.Info(logger).Log("GRPC", "proxy", "exposed", port, "certFile", certFile, "keyFile", keyFile)
+		server = grpc.NewServer(
+			grpc.UnaryInterceptor(kitgrpc.Interceptor),
+			grpc.CustomCodec(proxy.Codec()),
+			grpc.UnknownServiceHandler(proxy.TransparentHandler(director)),
+			grpc.Creds(creds),
+		)
+	} else {
+		level.Info(logger).Log("GRPC", "proxy", "exposed", port)
+		server = grpc.NewServer(
+			grpc.CustomCodec(proxy.Codec()),
+			grpc.UnknownServiceHandler(proxy.TransparentHandler(director)),
+			grpc.UnaryInterceptor(kitgrpc.Interceptor),
+		)
+	}
+	errs <- server.Serve(listener)
 }

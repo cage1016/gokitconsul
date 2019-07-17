@@ -19,6 +19,7 @@ import (
 	zipkinhttp "github.com/openzipkin/zipkin-go/reporter/http"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 	"sourcegraph.com/sourcegraph/appdash"
 	appdashot "sourcegraph.com/sourcegraph/appdash/opentracing"
@@ -33,6 +34,7 @@ func main() {
 	var (
 		//nameSpace      = fs.String("name-space", "gokitconsul", "")
 		serviceName    = fs.String("service-name", "foo-cli", "")
+		caCerts        = fs.String("ca-certs", "/Users/cage/qnap/quai/gokitconsul/deployments/docker/ssl/localhost+3.pem", "tls based credential")
 		httpAddr       = fs.String("http-addr", "", "HTTP address of addsvc")
 		grpcAddr       = fs.String("grpc-addr", "", "gRPC address of addsvc")
 		consulHost     = fs.String("consul-host", "", "")
@@ -142,7 +144,15 @@ func main() {
 				os.Exit(1)
 			}
 		} else {
-			conn, err = grpc.Dial(*grpcAddr, grpc.WithInsecure(), grpc.WithTimeout(time.Second))
+			if *caCerts != "" {
+				creds, err := credentials.NewClientTLSFromFile(*caCerts, "")
+				if err != nil {
+					fmt.Sprintf("failed to load credentials: %v", err)
+				}
+				conn, err = grpc.Dial(*grpcAddr, grpc.WithTransportCredentials(creds), grpc.WithTimeout(time.Second))
+			} else {
+				conn, err = grpc.Dial(*grpcAddr, grpc.WithInsecure(), grpc.WithTimeout(time.Second))
+			}
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v", err)
 				os.Exit(1)

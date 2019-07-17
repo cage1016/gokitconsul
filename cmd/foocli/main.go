@@ -18,6 +18,7 @@ import (
 	zipkinhttp "github.com/openzipkin/zipkin-go/reporter/http"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 	"sourcegraph.com/sourcegraph/appdash"
 	appdashot "sourcegraph.com/sourcegraph/appdash/opentracing"
@@ -32,6 +33,7 @@ func main() {
 	var (
 		//nameSpace      = fs.String("name-space", "gokitconsul", "")
 		serviceName    = fs.String("service-name", "foo-cli", "")
+		caCerts        = fs.String("ca-certs", "/Users/cage/qnap/quai/gokitconsul/deployments/docker/ssl/localhost+3.pem", "tls based credential")
 		httpAddr       = fs.String("http-addr", "", "HTTP address of foosvc")
 		grpcAddr       = fs.String("grpc-addr", "", "gRPC address of foosvc")
 		consulHost     = fs.String("consul-host", "", "")
@@ -121,16 +123,14 @@ func main() {
 			conn, err = grpc.Dial(
 				"",
 				grpc.WithInsecure(),
-				// 开启 grpc 中间件的重试功能
 				grpc.WithUnaryInterceptor(
 					grpc_retry.UnaryClientInterceptor(
-						grpc_retry.WithBackoff(grpc_retry.BackoffLinear(time.Duration(1)*time.Millisecond)),      // 重试间隔时间
-						grpc_retry.WithMax(3),                                                                    // 重试次数
-						grpc_retry.WithPerRetryTimeout(time.Duration(5)*time.Millisecond),                        // 重试时间
-						grpc_retry.WithCodes(codes.ResourceExhausted, codes.Unavailable, codes.DeadlineExceeded), // 返回码为如下值时重试
+						grpc_retry.WithBackoff(grpc_retry.BackoffLinear(time.Duration(1)*time.Millisecond)),
+						grpc_retry.WithMax(3),
+						grpc_retry.WithPerRetryTimeout(time.Duration(5)*time.Millisecond),
+						grpc_retry.WithCodes(codes.ResourceExhausted, codes.Unavailable, codes.DeadlineExceeded),
 					),
 				),
-				// 负载均衡，使用 consul 作服务发现
 				grpc.WithBalancer(grpc.RoundRobin(grpclb.NewConsulResolver(
 					fmt.Sprintf("%v:%d", *consulHost, *consultPort), "grpc.health.v1.foosvc",
 				))),
@@ -140,7 +140,15 @@ func main() {
 				os.Exit(1)
 			}
 		} else {
-			conn, err = grpc.Dial(*grpcAddr, grpc.WithInsecure(), grpc.WithTimeout(time.Second))
+			if *caCerts != "" {
+				creds, err := credentials.NewClientTLSFromFile(*caCerts, "")
+				if err != nil {
+					fmt.Sprintf("failed to load credentials: %v", err)
+				}
+				conn, err = grpc.Dial(*grpcAddr, grpc.WithTransportCredentials(creds), grpc.WithTimeout(time.Second))
+			} else {
+				conn, err = grpc.Dial(*grpcAddr, grpc.WithInsecure(), grpc.WithTimeout(time.Second))
+			}
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v", err)
 				os.Exit(1)
@@ -156,14 +164,14 @@ func main() {
 		st, ok := status.FromError(err)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			fmt.Fprintf(os.Stdout, "Foo  %s = %s\n", s, res)
+			fmt.Fprintf(os.Stdout, "Foo %s = %s\n", s, res)
 		} else {
 			fmt.Fprintf(os.Stderr, "error: %v\n", st.Message())
 		}
 
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stdout, "Foo  %s = %s\n", s, res)
+	fmt.Fprintf(os.Stdout, "Foo %s = %s\n", s, res)
 }
 
 func usageFor(fs *flag.FlagSet, short string) func() {

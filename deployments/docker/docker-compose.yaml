@@ -42,9 +42,9 @@ services:
       QS_ZIPKIN_V2_URL: http://zipkin:9411/api/v2/spans
     networks:
       - gokitconsul_base_net
-    ports:
-      - 7020:7020
-      - 7021:7021
+#    ports:
+#      - 7020:7020
+#      - 7021:7021
 
   addsvc:
     image: cage1016/gokitconsul-addsvc:latest
@@ -60,9 +60,9 @@ services:
       QS_ZIPKIN_V2_URL: http://zipkin:9411/api/v2/spans
     networks:
       - gokitconsul_base_net
-    ports:
-      - 8020:8020
-      - 8021:8021
+#    ports:
+#      - 8020:8020
+#      - 8021:8021
 
   gateway:
     image: cage1016/gokitconsul-gateway:latest
@@ -72,9 +72,11 @@ services:
       - addsvc
     ports:
       - 8000:8000
+      - 8001:8001
     environment:
       QS_GATEWAY_LOG_LEVEL: info
       QS_GATEWAY_HTTP_PORT: 8000
+      QS_GATEWAY_GRPC_PORT: 8001
       QS_GATEWAY_SERVER_CERT: /ssl/localhost+3.pem
       QS_GATEWAY_SERVER_KEY: /ssl/localhost+3-key.pem
       QS_GATEWAY_RETRY_MAX: 3

@@ -1,0 +1,39 @@
+{
+  "service":{
+    "path":"pkg/{{toSnakeCase .ServiceName}}/service",
+    "file_name":"service.go",
+    "interface_name":"{{toUpperFirstCamelCase .ServiceName}}Service",
+    "struct_name":"stub{{toCamelCase .ServiceName}}Service"
+  },
+  "middleware":{
+    "name":"middleware.go"
+  },
+  "endpoints":{
+    "path":"pkg/{{toSnakeCase .ServiceName}}/endpoints",
+    "file_name":"endpoints.go",
+    "requests_file_name":"requests.go",
+    "responses_file_name":"responses.go"
+  },
+  "transport":{
+    "path":"pkg/{{toSnakeCase .ServiceName}}/transports",
+    "file_name":"{{.TransportType}}.go"
+  },
+  "pb":{
+    "path":"pb/{{toSnakeCase .ServiceName}}"
+  },
+  "cmd":{
+   "path":"cmd/{{toSnakeCase .ServiceName}}",
+   "file_name":"main.go"
+  },
+  "consul": {
+    "register": {
+        "path": "pkg/shared_package/grpcsr",
+        "file_name": "consul_register.go"
+    },
+    "resolver": {
+        "path": "pkg/shared_package/grpclb",
+        "file_name": "consul_resolver.go"
+    }
+  },
+  "default_transport":"http"
+}
