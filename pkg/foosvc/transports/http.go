@@ -67,7 +67,7 @@ func NewHTTPHandler(endpoints endpoints.Endpoints, otTracer stdopentracing.Trace
 	m.Handle("/foo", httptransport.NewServer(
 		endpoints.FooEndpoint,
 		decodeHTTPFooRequest,
-		encodeHTTPGenericResponse,
+		httptransport.EncodeJSONResponse,
 		append(options, httptransport.ServerBefore(opentracing.HTTPToContext(otTracer, "Foo", logger)))...,
 	))
 	m.Handle("/metrics", promhttp.Handler())
@@ -175,22 +175,6 @@ func decodeHTTPFooResponse(_ context.Context, r *http.Response) (interface{}, er
 	var resp endpoints.FooResponse
 	err := json.NewDecoder(r.Body).Decode(&resp)
 	return resp, err
-}
-
-// encodeHTTPGenericResponse is a transport/http.EncodeResponseFunc that encodes
-// the response as JSON to the response writer. Primarily useful in a server.
-func encodeHTTPGenericResponse(ctx context.Context, w http.ResponseWriter, response interface{}) error {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if ar, ok := response.(endpoints.Response); ok {
-		for k, v := range ar.Headers() {
-			w.Header().Set(k, v)
-		}
-		w.WriteHeader(ar.Code())
-		if ar.Empty() {
-			return nil
-		}
-	}
-	return json.NewEncoder(w).Encode(response)
 }
 
 func httpEncodeError(_ context.Context, err error, w http.ResponseWriter) {

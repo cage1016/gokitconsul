@@ -1,18 +1,17 @@
 package endpoints
 
-import "net/http"
+import (
+	"net/http"
 
-var (
-	_ Response = (*SumResponse)(nil)
-	_ Response = (*ConcatResponse)(nil)
+	httptransport "github.com/go-kit/kit/transport/http"
 )
 
-// Response contains HTTP response specific methods.
-type Response interface {
-	Code() int
-	Headers() map[string]string
-	Empty() bool
-}
+var (
+	_ httptransport.Headerer    = (*SumResponse)(nil)
+	_ httptransport.StatusCoder = (*SumResponse)(nil)
+	_ httptransport.Headerer    = (*ConcatResponse)(nil)
+	_ httptransport.StatusCoder = (*ConcatResponse)(nil)
+)
 
 // SumResponse collects the response values for the Sum method.
 type SumResponse struct {
@@ -20,16 +19,12 @@ type SumResponse struct {
 	Err error `json:"err"`
 }
 
-func (r SumResponse) Code() int {
+func (r SumResponse) StatusCode() int {
 	return http.StatusOK // TBA
 }
 
-func (r SumResponse) Headers() map[string]string {
-	return map[string]string{} // TBA
-}
-
-func (r SumResponse) Empty() bool {
-	return false // TBA
+func (r SumResponse) Headers() http.Header {
+	return http.Header{}
 }
 
 // ConcatResponse collects the response values for the Concat method.
@@ -38,14 +33,10 @@ type ConcatResponse struct {
 	Err error  `json:"err"`
 }
 
-func (r ConcatResponse) Code() int {
+func (r ConcatResponse) StatusCode() int {
 	return http.StatusOK // TBA
 }
 
-func (r ConcatResponse) Headers() map[string]string {
-	return map[string]string{} // TBA
-}
-
-func (r ConcatResponse) Empty() bool {
-	return false // TBA
+func (r ConcatResponse) Headers() http.Header {
+	return http.Header{}
 }

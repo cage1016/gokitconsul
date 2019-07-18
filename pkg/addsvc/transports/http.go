@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/go-kit/kit/sd/lb"
-	"google.golang.org/grpc/status"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -19,6 +17,7 @@ import (
 	"github.com/go-kit/kit/endpoint"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/ratelimit"
+	"github.com/go-kit/kit/sd/lb"
 	"github.com/go-kit/kit/tracing/opentracing"
 	"github.com/go-kit/kit/tracing/zipkin"
 	httptransport "github.com/go-kit/kit/transport/http"
@@ -27,6 +26,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sony/gobreaker"
 	"golang.org/x/time/rate"
+	"google.golang.org/grpc/status"
 
 	"github.com/cage1016/gokitconsul/pkg/addsvc/endpoints"
 	"github.com/cage1016/gokitconsul/pkg/addsvc/service"
@@ -67,13 +67,13 @@ func NewHTTPHandler(endpoints endpoints.Endpoints, otTracer stdopentracing.Trace
 	m.Handle("/sum", httptransport.NewServer(
 		endpoints.SumEndpoint,
 		decodeHTTPSumRequest,
-		encodeHTTPGenericResponse,
+		httptransport.EncodeJSONResponse,
 		append(options, httptransport.ServerBefore(opentracing.HTTPToContext(otTracer, "Sum", logger)))...,
 	))
 	m.Handle("/concat", httptransport.NewServer(
 		endpoints.ConcatEndpoint,
 		decodeHTTPConcatRequest,
-		encodeHTTPGenericResponse,
+		httptransport.EncodeJSONResponse,
 		append(options, httptransport.ServerBefore(opentracing.HTTPToContext(otTracer, "Concat", logger)))...,
 	))
 	m.Handle("/metrics", promhttp.Handler())
@@ -234,22 +234,6 @@ func decodeHTTPConcatResponse(_ context.Context, r *http.Response) (interface{},
 	var resp endpoints.ConcatResponse
 	err := json.NewDecoder(r.Body).Decode(&resp)
 	return resp, err
-}
-
-// encodeHTTPGenericResponse is a transport/http.EncodeResponseFunc that encodes
-// the response as JSON to the response writer. Primarily useful in a server.
-func encodeHTTPGenericResponse(ctx context.Context, w http.ResponseWriter, response interface{}) error {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if ar, ok := response.(endpoints.Response); ok {
-		for k, v := range ar.Headers() {
-			w.Header().Set(k, v)
-		}
-		w.WriteHeader(ar.Code())
-		if ar.Empty() {
-			return nil
-		}
-	}
-	return json.NewEncoder(w).Encode(response)
 }
 
 func httpEncodeError(_ context.Context, err error, w http.ResponseWriter) {

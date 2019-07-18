@@ -1,17 +1,15 @@
 package endpoints
 
-import "net/http"
+import (
+	"net/http"
 
-var (
-	_ Response = (*FooResponse)(nil)
+	httptransport "github.com/go-kit/kit/transport/http"
 )
 
-// Response contains HTTP response specific methods.
-type Response interface {
-	Code() int
-	Headers() map[string]string
-	Empty() bool
-}
+var (
+	_ httptransport.Headerer    = (*FooResponse)(nil)
+	_ httptransport.StatusCoder = (*FooResponse)(nil)
+)
 
 // FooResponse collects the response values for the Foo method.
 type FooResponse struct {
@@ -19,14 +17,10 @@ type FooResponse struct {
 	Err error  `json:"err"`
 }
 
-func (r FooResponse) Code() int {
+func (r FooResponse) StatusCode() int {
 	return http.StatusOK // TBA
 }
 
-func (r FooResponse) Headers() map[string]string {
-	return map[string]string{} // TBA
-}
-
-func (r FooResponse) Empty() bool {
-	return false // TBA
+func (r FooResponse) Headers() http.Header {
+	return http.Header{}
 }
