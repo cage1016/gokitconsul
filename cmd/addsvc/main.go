@@ -110,15 +110,17 @@ func main() {
 	{
 		if cfg.consulHost != "" && cfg.consultPort != "" {
 			consulAddres := fmt.Sprintf("%s:%s", cfg.consulHost, cfg.consultPort)
-			servicePort, _ := strconv.Atoi(cfg.grpcPort)
-			consulReg := grpcsr.NewConsulRegister(consulAddres, cfg.serviceName, servicePort, []string{cfg.nameSpace, cfg.serviceName}, logger)
+			grpcPort, _ := strconv.Atoi(cfg.grpcPort)
+			metricsPort, _ := strconv.Atoi(cfg.httpPort)
+			consulReg := grpcsr.NewConsulRegister(consulAddres, cfg.serviceName, grpcPort, metricsPort, []string{cfg.nameSpace, cfg.serviceName}, logger)
 			svcRegistar, err := consulReg.NewConsulGRPCRegister()
 			defer svcRegistar.Deregister()
 			if err != nil {
 				level.Error(logger).Log(
 					"consulAddres", consulAddres,
 					"serviceName", cfg.serviceName,
-					"servicePort", servicePort,
+					"grpcPort", grpcPort,
+					"metricsPort", metricsPort,
 					"tags", []string{cfg.nameSpace, cfg.serviceName},
 					"err", err,
 				)

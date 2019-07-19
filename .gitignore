@@ -73,3 +73,4 @@ fabric.properties
 *.out
 
 /build/
+/deployments/docker/extra/
