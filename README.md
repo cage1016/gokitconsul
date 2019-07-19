@@ -13,6 +13,8 @@
 ## Dependency
 
 - consul as discover service
+- prometheus monitor service
+- grafana analytics service
 - zipkin as trace service
 - gateway
     - http → grpc (8000)
@@ -22,7 +24,6 @@
 
 - pkg/addsvc
 - pkg/foosvc
-
 
 ## Install
 
@@ -41,21 +42,25 @@ make dockers
 $ make u
 docker-compose -f deployments/docker/docker-compose.yaml up -d
 Creating network "docker_gokitconsul_base_net" with driver "bridge"
-Creating gokitconsul-zipkin ... done
-Creating gokitconsul-consul ... done
-Creating gokitconsul-addsvc ... done
-Creating gokitconsul-foosvc ... done
-Creating gokitconsul-gateway ... done
+Creating gokitconsul-grafana    ... done
+Creating gokitconsul-prometheus ... done
+Creating gokitconsul-consul     ... done
+Creating gokitconsul-zipkin     ... done
+Creating gokitconsul-addsvc     ... done
+Creating gokitconsul-foosvc     ... done
+Creating gokitconsul-gateway    ... done
 ...
 
 
 $ docker ps
 CONTAINER ID        IMAGE                                 COMMAND                  CREATED             STATUS              PORTS                                                                                                            NAMES
-da530fa40f49        cage1016/gokitconsul-gateway:latest   "/exe"                   5 seconds ago       Up 3 seconds        0.0.0.0:8000-8001->8000-8001/tcp                                                                                 gokitconsul-gateway
-1dc81d7fff48        cage1016/gokitconsul-foosvc:latest    "/exe"                   5 seconds ago       Up 3 seconds                                                                                                                         gokitconsul-foosvc
-c10103d7f730        cage1016/gokitconsul-addsvc:latest    "/exe"                   6 seconds ago       Up 4 seconds                                                                                                                         gokitconsul-addsvc
-22a977ac5008        consul:1.5.1                          "docker-entrypoint.s…"   7 seconds ago       Up 5 seconds        0.0.0.0:8400->8400/tcp, 8301-8302/udp, 0.0.0.0:8500->8500/tcp, 8300-8302/tcp, 8600/udp, 0.0.0.0:8600->8600/tcp   gokitconsul-consul
-24379e34597d        openzipkin/zipkin                     "/busybox/sh run.sh"     7 seconds ago       Up 6 seconds        9410/tcp, 0.0.0.0:9411->9411/tcp
+8e90575d6fe8        cage1016/gokitconsul-foosvc:latest    "/exe"                   6 minutes ago       Up 6 minutes                                                                                                                         gokitconsul-foosvc
+11f1e1961b41        cage1016/gokitconsul-gateway:latest   "/exe"                   6 minutes ago       Up 6 minutes        0.0.0.0:8000-8001->8000-8001/tcp                                                                                 gokitconsul-gateway
+e32bcb33e7fd        cage1016/gokitconsul-addsvc:latest    "/exe"                   6 minutes ago       Up 6 minutes                                                                                                                         gokitconsul-addsvc
+be19f862858d        openzipkin/zipkin                     "/busybox/sh run.sh"     6 minutes ago       Up 6 minutes        9410/tcp, 0.0.0.0:9411->9411/tcp                                                                                 gokitconsul-zipkin
+65a462567477        grafana/grafana                       "/run.sh"                6 minutes ago       Up 6 minutes        0.0.0.0:3000->3000/tcp                                                                                           gokitconsul-grafana
+929e2fbe6d80        prom/prometheus                       "/bin/prometheus --c…"   6 minutes ago       Up 6 minutes        0.0.0.0:9090->9090/tcp                                                                                           gokitconsul-prometheus
+fd645841abe7        consul:1.5.1                          "docker-entrypoint.s…"   6 minutes ago       Up 6 minutes        0.0.0.0:8400->8400/tcp, 8301-8302/udp, 0.0.0.0:8500->8500/tcp, 8300-8302/tcp, 8600/udp, 0.0.0.0:8600->8600/tcp   gokitconsul-consul
 ```
 
 ## Test
@@ -99,6 +104,14 @@ visit http://localhost:9411
 ![zipkin success](./screenshots/zipkin.jpg)
 
 ![zipkin bad request](./screenshots/zipkin2.jpg)
+
+_prometheus_
+visit http://localhost:9000
+![](./screenshots/prometheus.jpg)
+
+_grafana_
+visit http://localhost:3000 (admin/password)
+![](./screenshots/grafana.jpg)
 
 ## Stop
 
