@@ -16,6 +16,9 @@
 - prometheus monitor service
 - grafana analytics service
 - zipkin as trace service
+- fluentd
+- kibana
+- elasticsearch
 - gateway
     - http → grpc (8000)
     - grpc proxy (8001)
@@ -41,26 +44,31 @@ make dockers
 # start
 $ make u
 docker-compose -f deployments/docker/docker-compose.yaml up -d
-Creating network "docker_gokitconsul_base_net" with driver "bridge"
-Creating gokitconsul-grafana    ... done
-Creating gokitconsul-prometheus ... done
-Creating gokitconsul-consul     ... done
-Creating gokitconsul-zipkin     ... done
-Creating gokitconsul-addsvc     ... done
-Creating gokitconsul-foosvc     ... done
-Creating gokitconsul-gateway    ... done
-...
+Creating network "net" with driver "bridge"
+Recreating gokitconsul-elasticsearch ... done
+Creating gokitconsul-fluentd         ... done
+Recreating gokitconsul-grafana       ... done
+Recreating gokitconsul-consul        ... done
+Recreating gokitconsul-prometheus    ... done
+Recreating gokitconsul-zipkin        ... done
+Creating gokitconsul-kibana          ... done
+Creating gokitconsul-addsvc          ... done
+Creating gokitconsul-gateway         ... done
+Creating gokitconsul-foosvc          ... done
 
 
 $ docker ps
 CONTAINER ID        IMAGE                                 COMMAND                  CREATED             STATUS              PORTS                                                                                                            NAMES
-8e90575d6fe8        cage1016/gokitconsul-foosvc:latest    "/exe"                   6 minutes ago       Up 6 minutes                                                                                                                         gokitconsul-foosvc
-11f1e1961b41        cage1016/gokitconsul-gateway:latest   "/exe"                   6 minutes ago       Up 6 minutes        0.0.0.0:8000-8001->8000-8001/tcp                                                                                 gokitconsul-gateway
-e32bcb33e7fd        cage1016/gokitconsul-addsvc:latest    "/exe"                   6 minutes ago       Up 6 minutes                                                                                                                         gokitconsul-addsvc
-be19f862858d        openzipkin/zipkin                     "/busybox/sh run.sh"     6 minutes ago       Up 6 minutes        9410/tcp, 0.0.0.0:9411->9411/tcp                                                                                 gokitconsul-zipkin
-65a462567477        grafana/grafana                       "/run.sh"                6 minutes ago       Up 6 minutes        0.0.0.0:3000->3000/tcp                                                                                           gokitconsul-grafana
-929e2fbe6d80        prom/prometheus                       "/bin/prometheus --c…"   6 minutes ago       Up 6 minutes        0.0.0.0:9090->9090/tcp                                                                                           gokitconsul-prometheus
-fd645841abe7        consul:1.5.1                          "docker-entrypoint.s…"   6 minutes ago       Up 6 minutes        0.0.0.0:8400->8400/tcp, 8301-8302/udp, 0.0.0.0:8500->8500/tcp, 8300-8302/tcp, 8600/udp, 0.0.0.0:8600->8600/tcp   gokitconsul-consul
+7da33c5f4ae8        cage1016/gokitconsul-gateway:latest   "/exe"                   4 seconds ago       Up 3 seconds        0.0.0.0:8000-8001->8000-8001/tcp                                                                                 gokitconsul-gateway
+c5521d8d8879        cage1016/gokitconsul-foosvc:latest    "/exe"                   4 seconds ago       Up 3 seconds                                                                                                                         gokitconsul-foosvc
+3804cea4fa33        cage1016/gokitconsul-addsvc:latest    "/exe"                   6 seconds ago       Up 4 seconds                                                                                                                         gokitconsul-addsvc
+0225bdb521a2        grafana/grafana                       "/run.sh"                8 seconds ago       Up 6 seconds        0.0.0.0:3000->3000/tcp                                                                                           gokitconsul-grafana
+17d3253f5e98        openzipkin/zipkin                     "/busybox/sh run.sh"     8 seconds ago       Up 7 seconds        9410/tcp, 0.0.0.0:9411->9411/tcp                                                                                 gokitconsul-zipkin
+f157f98e2651        prom/prometheus                       "/bin/prometheus --c…"   8 seconds ago       Up 6 seconds        0.0.0.0:9090->9090/tcp                                                                                           gokitconsul-prometheus
+240b055c29bb        consul:1.5.1                          "docker-entrypoint.s…"   8 seconds ago       Up 6 seconds        0.0.0.0:8400->8400/tcp, 8301-8302/udp, 0.0.0.0:8500->8500/tcp, 8300-8302/tcp, 8600/udp, 0.0.0.0:8600->8600/tcp   gokitconsul-consul
+013a30314238        kibana:6.6.1                          "/usr/local/bin/kiba…"   8 seconds ago       Up 7 seconds        0.0.0.0:5601->5601/tcp                                                                                           gokitconsul-kibana
+d67f9970fef9        docker_fluentd                        "tini -- /bin/entryp…"   9 seconds ago       Up 8 seconds        5140/tcp, 0.0.0.0:24224->24224/tcp, 0.0.0.0:24224->24224/udp                                                     gokitconsul-fluentd
+9590182d4175        elasticsearch:6.6.1                   "/usr/local/bin/dock…"   10 seconds ago      Up 9 seconds        0.0.0.0:9200->9200/tcp, 9300/tcp                                                                                 gokitconsul-elasticsearch
 ```
 
 ## Test
@@ -112,6 +120,10 @@ visit http://localhost:9000
 _grafana_
 visit http://localhost:3000 (admin/password)
 ![](./screenshots/grafana.jpg)
+
+_kibana_
+visit http://localhost:5601
+![](./screenshots/kibana.jpg)
 
 ## Stop
 
