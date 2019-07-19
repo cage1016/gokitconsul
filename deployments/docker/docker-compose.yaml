@@ -89,6 +89,12 @@ services:
   elasticsearch:
     image: elasticsearch:6.6.1
     container_name: gokitconsul-elasticsearch
+    volumes:
+      - ./esdata:/usr/share/elasticsearch/data
+    environment:
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms256m -Xms256m"
+      - discovery.type=single-node
     expose:
       - 9200
     ports:
@@ -125,7 +131,6 @@ services:
       QS_ZIPKIN_V2_URL: http://zipkin:9411/api/v2/spans
     depends_on:
       - consul
-      - addsvc
       - fluentd
     logging:
       driver: fluentd
@@ -172,7 +177,6 @@ services:
       QS_ZIPKIN_V2_URL: http://zipkin:9411/api/v2/spans
     depends_on:
       - consul
-      - addsvc
       - fluentd
     ports:
       - 8000:8000

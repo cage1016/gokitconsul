@@ -41,7 +41,7 @@ make dockers
 ## Usage
 
 ```sh
-# start
+# start full feature
 $ make u
 docker-compose -f deployments/docker/docker-compose.yaml up -d
 Creating network "net" with driver "bridge"
@@ -55,6 +55,11 @@ Creating gokitconsul-kibana          ... done
 Creating gokitconsul-addsvc          ... done
 Creating gokitconsul-gateway         ... done
 Creating gokitconsul-foosvc          ... done
+
+or
+
+# run without elasticsearch/fluentd/grafana/kibana/prometheus
+$ docker-compose -f deployments/docker/docker-compose-dev.yaml up -d
 
 
 $ docker ps
