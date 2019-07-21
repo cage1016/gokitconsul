@@ -13,6 +13,8 @@ var (
 	ErrMalformedEntity = errors.New("malformed entity specification")
 )
 
+type Middleware func(UserRepository) UserRepository
+
 // User represents a Mainflux user account. Each user is identified given its
 // email and password.
 type User struct {
