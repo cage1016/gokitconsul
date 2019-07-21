@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/cage1016/gokitconsul/pkg/shared_package/grpcsr"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/go-kit/kit/metrics"
 	"github.com/go-kit/kit/metrics/prometheus"
+	consulsd "github.com/go-kit/kit/sd/consul"
 	kitgrpc "github.com/go-kit/kit/transport/grpc"
 	"github.com/jmoiron/sqlx"
 	"github.com/lightstep/lightstep-tracer-go"
@@ -32,64 +32,66 @@ import (
 	"github.com/cage1016/gokitconsul/pkg/authn/bcrypt"
 	"github.com/cage1016/gokitconsul/pkg/authn/endpoints"
 	"github.com/cage1016/gokitconsul/pkg/authn/jwt"
+	"github.com/cage1016/gokitconsul/pkg/authn/model"
 	"github.com/cage1016/gokitconsul/pkg/authn/postgres"
 	"github.com/cage1016/gokitconsul/pkg/authn/service"
 	"github.com/cage1016/gokitconsul/pkg/authn/transports"
+	"github.com/cage1016/gokitconsul/pkg/shared_package/grpcsr"
 )
 
 const (
-	defConsulHost     string = ""
-	defConsulPort     string = ""
-	defZipkinV1URL    string = ""
-	defZipkinV2URL    string = ""
-	defLightstepToken string = ""
-	defAppdashAddr    string = ""
-	defNameSpace      string = "gokitconsul"
-	defServiceName    string = "authn"
-	defLogLevel       string = "error"
-	defServiceHost    string = "localhost"
-	defHTTPPort       string = "6020"
-	defGRPCPort       string = "6021"
-	defServerCert     string = ""
-	defServerKey      string = ""
-	defClientTLS      string = "false"
-	defCACerts        string = ""
-	defDBHost         string = "localhost"
-	defDBPort         string = "5432"
-	defDBUser         string = "gokitconsul"
-	defDBPass         string = "gokitconsul"
-	defDBName         string = "authn"
-	defDBSSLMode      string = "disable"
-	defDBSSLCert      string = ""
-	defDBSSLKey       string = ""
-	defDBSSLRootCert  string = ""
-	defSecret         string = "gokitconsul-authn"
-	envConsulHost     string = "QS_CONSULT_HOST"
-	envConsultPort    string = "QS_CONSULT_PORT"
-	envZipkinV1URL    string = "QS_ZIPKIN_V1_URL"
-	envZipkinV2URL    string = "QS_ZIPKIN_V2_URL"
-	envLightstepToken string = "QS_LIGHT_STEP_TOKEN"
-	envAppdashAddr    string = "QS_APPDASH_ADDR"
-	envNameSpace      string = "QS_AUTHN_NAMESPACE"
-	envServiceName    string = "QS_AUTHN_SERVICE_NAME"
-	envLogLevel       string = "QS_AUTHN_LOG_LEVEL"
-	envServiceHost    string = "QS_AUTHN_SERVICE_HOST"
-	envHTTPPort       string = "QS_AUTHN_HTTP_PORT"
-	envGRPCPort       string = "QS_AUTHN_GRPC_PORT"
-	envServerCert     string = "QS_AUTHN_SERVER_CERT"
-	envServerKey      string = "QS_AUTHN_SERVER_KEY"
-	envClientTLS      string = "QS_AUTHN_CLIENT_TLS"
-	envCACerts        string = "QS_AUTHN_CA_CERTS"
-	envDBHost         string = "QS_AUTHN_DB_HOST"
-	envDBPort         string = "QS_AUTHN_DB_PORT"
-	envDBUser         string = "QS_AUTHN_DB_USER"
-	envDBPass         string = "QS_AUTHN_DB_PASS"
-	envDBName         string = "QS_AUTHN_DB"
-	envDBSSLMode      string = "QS_AUTHN_DB_SSL_MODE"
-	envDBSSLCert      string = "QS_AUTHN_DB_SSL_CERT"
-	envDBSSLKey       string = "QS_AUTHN_DB_SSL_KEY"
-	envDBSSLRootCert  string = "QS_AUTHN_DB_SSL_ROOT_CERT"
-	envSecret         string = "QS_AUTHN_SECRET"
+	defConsulHost     = ""
+	defConsulPort     = ""
+	defZipkinV1URL    = ""
+	defZipkinV2URL    = ""
+	defLightstepToken = ""
+	defAppdashAddr    = ""
+	defNameSpace      = "gokitconsul"
+	defServiceName    = "authn"
+	defLogLevel       = "error"
+	defServiceHost    = "localhost"
+	defHTTPPort       = "6020"
+	defGRPCPort       = "6021"
+	defServerCert     = ""
+	defServerKey      = ""
+	defClientTLS      = "false"
+	defCACerts        = ""
+	defDBHost         = "localhost"
+	defDBPort         = "5432"
+	defDBUser         = "gokitconsul"
+	defDBPass         = "gokitconsul"
+	defDBName         = "authn"
+	defDBSSLMode      = "disable"
+	defDBSSLCert      = ""
+	defDBSSLKey       = ""
+	defDBSSLRootCert  = ""
+	defSecret         = "gokitconsul-authn"
+	envConsulHost     = "QS_CONSULT_HOST"
+	envConsultPort    = "QS_CONSULT_PORT"
+	envZipkinV1URL    = "QS_ZIPKIN_V1_URL"
+	envZipkinV2URL    = "QS_ZIPKIN_V2_URL"
+	envLightstepToken = "QS_LIGHT_STEP_TOKEN"
+	envAppdashAddr    = "QS_APPDASH_ADDR"
+	envNameSpace      = "QS_AUTHN_NAMESPACE"
+	envServiceName    = "QS_AUTHN_SERVICE_NAME"
+	envLogLevel       = "QS_AUTHN_LOG_LEVEL"
+	envServiceHost    = "QS_AUTHN_SERVICE_HOST"
+	envHTTPPort       = "QS_AUTHN_HTTP_PORT"
+	envGRPCPort       = "QS_AUTHN_GRPC_PORT"
+	envServerCert     = "QS_AUTHN_SERVER_CERT"
+	envServerKey      = "QS_AUTHN_SERVER_KEY"
+	envClientTLS      = "QS_AUTHN_CLIENT_TLS"
+	envCACerts        = "QS_AUTHN_CA_CERTS"
+	envDBHost         = "QS_AUTHN_DB_HOST"
+	envDBPort         = "QS_AUTHN_DB_PORT"
+	envDBUser         = "QS_AUTHN_DB_USER"
+	envDBPass         = "QS_AUTHN_DB_PASS"
+	envDBName         = "QS_AUTHN_DB"
+	envDBSSLMode      = "QS_AUTHN_DB_SSL_MODE"
+	envDBSSLCert      = "QS_AUTHN_DB_SSL_CERT"
+	envDBSSLKey       = "QS_AUTHN_DB_SSL_KEY"
+	envDBSSLRootCert  = "QS_AUTHN_DB_SSL_ROOT_CERT"
+	envSecret         = "QS_AUTHN_SECRET"
 )
 
 type config struct {
@@ -132,36 +134,39 @@ func main() {
 	}
 	cfg := loadConfig(logger)
 
-	// consul
+	db := connectToDB(cfg.dbConfig, logger)
+	defer db.Close()
+
 	{
-		if cfg.consulHost != "" && cfg.consultPort != "" {
-			consulAddres := fmt.Sprintf("%s:%s", cfg.consulHost, cfg.consultPort)
-			grpcPort, _ := strconv.Atoi(cfg.grpcPort)
-			metricsPort, _ := strconv.Atoi(cfg.httpPort)
-			consulReg := grpcsr.NewConsulRegister(consulAddres, cfg.serviceName, grpcPort, metricsPort, []string{cfg.nameSpace, cfg.serviceName}, logger)
-			svcRegistar, err := consulReg.NewConsulGRPCRegister()
+		svcRegistar, err := initConsul(cfg.nameSpace, cfg.serviceName, cfg.consulHost, cfg.consultPort, cfg.httpPort, cfg.grpcPort, logger)
+		if err != nil {
+			level.Error(logger).Log(
+				"consult", fmt.Sprintf("%s:%s", cfg.consulHost, cfg.consultPort),
+				"serviceName", cfg.serviceName,
+				"grpcPort", cfg.grpcPort,
+				"metricsPort", cfg.httpPort,
+				"tags", []string{cfg.nameSpace, cfg.serviceName},
+				"err", err,
+			)
+		} else {
 			defer svcRegistar.Deregister()
-			if err != nil {
-				level.Error(logger).Log(
-					"consulAddres", consulAddres,
-					"serviceName", cfg.serviceName,
-					"grpcPort", grpcPort,
-					"metricsPort", metricsPort,
-					"tags", []string{cfg.nameSpace, cfg.serviceName},
-					"err", err,
-				)
-			}
 			svcRegistar.Register()
 		}
 	}
 
-	db := connectToDB(cfg.dbConfig, logger)
-	//defer db.Close()
+	tracer := initOpentracing(cfg.serviceName, cfg.httpPort, cfg.zipkinV1URL, cfg.zipkinV2URL, cfg.lightstepToken, cfg.appdashAddr, logger)
+	zipkinTracer := initZipkin(cfg.serviceName, cfg.httpPort, cfg.zipkinV2URL, logger)
 
+	service := NewServer(cfg.nameSpace, cfg.serviceName, db, zipkinTracer, cfg.secret, logger)
+	var duration metrics.Histogram
+	{
+		duration = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{Namespace: cfg.nameSpace, Subsystem: cfg.serviceName, Name: "request_duration_ns", Help: "Request duration in nanoseconds."}, []string{"method", "success"})
+	}
+	endpoints := endpoints.New(service, logger, duration, tracer, zipkinTracer)
 	errs := make(chan error, 2)
-	grpcServer, httpHandler := NewServer(cfg, db, logger)
-	go startHTTPServer(cfg, httpHandler, logger, errs)
-	go startGRPCServer(cfg, grpcServer, logger, errs)
+
+	go startHTTPServer(endpoints, tracer, zipkinTracer, cfg.httpPort, cfg.serverCert, cfg.serverKey, logger, errs)
+	go startGRPCServer(endpoints, tracer, zipkinTracer, cfg.grpcPort, cfg.serverCert, cfg.serverKey, logger, errs)
 
 	go func() {
 		c := make(chan os.Signal)
@@ -212,86 +217,15 @@ func loadConfig(logger log.Logger) (cfg config) {
 	return cfg
 }
 
-func NewServer(cfg config, db *sqlx.DB, logger log.Logger) (pb.AuthnServer, http.Handler) {
-	var tracer stdopentracing.Tracer
-	{
-		if cfg.zipkinV1URL != "" && cfg.zipkinV2URL == "" {
-			logger.Log("tracer", "Zipkin", "type", "OpenTracing", "URL", cfg.zipkinV1URL)
-			collector, err := zipkinot.NewHTTPCollector(cfg.zipkinV1URL)
-			if err != nil {
-				logger.Log("err", err)
-				os.Exit(1)
-			}
-			defer collector.Close()
-			var (
-				debug       = false
-				hostPort    = fmt.Sprintf("localhost:%s", cfg.httpPort)
-				serviceName = cfg.serviceName
-			)
-			recorder := zipkinot.NewRecorder(collector, debug, hostPort, serviceName)
-			tracer, err = zipkinot.NewTracer(recorder)
-			if err != nil {
-				logger.Log("err", err)
-				os.Exit(1)
-			}
-		} else if cfg.lightstepToken != "" {
-			logger.Log("tracer", "LightStep")
-			tracer = lightstep.NewTracer(lightstep.Options{AccessToken: cfg.lightstepToken})
-			defer lightstep.FlushLightStepTracer(tracer)
-		} else if cfg.appdashAddr != "" {
-			logger.Log("tracer", "Appdash", "addr", cfg.appdashAddr)
-			tracer = appdashot.NewTracer(appdash.NewRemoteCollector(cfg.appdashAddr))
-		} else {
-			tracer = stdopentracing.GlobalTracer()
-		}
+func initConsul(nameSpace, serviceName, consulHost, consultPort, httpPort, grpcPort string, logger log.Logger) (svcRegistar *consulsd.Registrar, err error) {
+	if consulHost != "" && consultPort != "" {
+		consulAddres := fmt.Sprintf("%s:%s", consulHost, consultPort)
+		grpcPort, _ := strconv.Atoi(grpcPort)
+		metricsPort, _ := strconv.Atoi(httpPort)
+		consulReg := grpcsr.NewConsulRegister(consulAddres, serviceName, grpcPort, metricsPort, []string{nameSpace, serviceName}, logger)
+		svcRegistar, err = consulReg.NewConsulGRPCRegister()
 	}
-
-	var zipkinTracer *zipkin.Tracer
-	{
-		var (
-			err           error
-			hostPort      = fmt.Sprintf("localhost:%s", cfg.httpPort)
-			serviceName   = cfg.serviceName
-			useNoopTracer = (cfg.zipkinV2URL == "")
-			reporter      = zipkinhttp.NewReporter(cfg.zipkinV2URL)
-		)
-		zEP, _ := zipkin.NewEndpoint(serviceName, hostPort)
-		zipkinTracer, err = zipkin.NewTracer(reporter, zipkin.WithLocalEndpoint(zEP), zipkin.WithNoopTracer(useNoopTracer))
-		if err != nil {
-			logger.Log("err", err)
-			os.Exit(1)
-		}
-		if !useNoopTracer {
-			logger.Log("tracer", "Zipkin", "type", "Native", "URL", cfg.zipkinV2URL)
-		}
-	}
-
-	var (
-		requestCount   metrics.Counter
-		requestLatency metrics.Histogram
-		fieldKeys      []string
-	)
-	{
-		fieldKeys = []string{"method", "error"}
-		requestCount = prometheus.NewCounterFrom(stdprometheus.CounterOpts{Namespace: cfg.nameSpace, Subsystem: cfg.serviceName, Name: "request_count", Help: "Number of requests received."}, fieldKeys)
-		requestLatency = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{Namespace: cfg.nameSpace, Subsystem: cfg.serviceName, Name: "request_latency_microseconds", Help: "Total duration of requests in microseconds."}, fieldKeys)
-	}
-
-	var duration metrics.Histogram
-	{
-		duration = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{Namespace: cfg.nameSpace, Subsystem: cfg.serviceName, Name: "request_duration_ns", Help: "Request duration in nanoseconds."}, []string{"method", "success"})
-	}
-
-	repo := postgres.New(db, logger)
-	hasher := bcrypt.New()
-	idp := jwt.New(cfg.secret)
-
-	service := service.New(logger, requestCount, requestLatency, repo, hasher, idp)
-	endpoints := endpoints.New(service, logger, duration, tracer, zipkinTracer)
-	httpHandler := transports.NewHTTPHandler(endpoints, tracer, zipkinTracer, logger)
-	grpcServer := transports.MakeGRPCServer(endpoints, tracer, zipkinTracer, logger)
-
-	return grpcServer, httpHandler
+	return
 }
 
 func connectToDB(cfg postgres.Config, logger log.Logger) *sqlx.DB {
@@ -315,39 +249,113 @@ func connectToDB(cfg postgres.Config, logger log.Logger) *sqlx.DB {
 	return db
 }
 
-func startHTTPServer(cfg config, httpHandler http.Handler, logger log.Logger, errs chan error) {
-	p := fmt.Sprintf(":%s", cfg.httpPort)
-	if cfg.serverCert != "" || cfg.serverKey != "" {
-		level.Info(logger).Log("serviceName", cfg.serviceName, "protocol", "HTTP", "exposed", cfg.httpPort, "certFile", cfg.serverCert, "keyFile", cfg.serverKey)
-		errs <- http.ListenAndServeTLS(p, cfg.serverCert, cfg.serverKey, httpHandler)
+func initOpentracing(serviceName, httpPort, zipkinV1URL, zipkinV2URL, lightstepToken, appdashAddr string, logger log.Logger) (tracer stdopentracing.Tracer) {
+	if zipkinV1URL != "" && zipkinV2URL == "" {
+		logger.Log("tracer", "Zipkin", "type", "OpenTracing", "URL", zipkinV1URL)
+		collector, err := zipkinot.NewHTTPCollector(zipkinV1URL)
+		if err != nil {
+			logger.Log("err", err)
+			os.Exit(1)
+		}
+		defer collector.Close()
+		var (
+			debug       = false
+			hostPort    = fmt.Sprintf("localhost:%s", httpPort)
+			serviceName = serviceName
+		)
+		recorder := zipkinot.NewRecorder(collector, debug, hostPort, serviceName)
+		tracer, err = zipkinot.NewTracer(recorder)
+		if err != nil {
+			logger.Log("err", err)
+			os.Exit(1)
+		}
+	} else if lightstepToken != "" {
+		logger.Log("tracer", "LightStep")
+		tracer = lightstep.NewTracer(lightstep.Options{AccessToken: lightstepToken})
+		defer lightstep.FlushLightStepTracer(tracer)
+	} else if appdashAddr != "" {
+		logger.Log("tracer", "Appdash", "addr", appdashAddr)
+		tracer = appdashot.NewTracer(appdash.NewRemoteCollector(appdashAddr))
 	} else {
-		level.Info(logger).Log("serviceName", cfg.serviceName, "protocol", "HTTP", "exposed", cfg.httpPort)
-		errs <- http.ListenAndServe(p, httpHandler)
+		tracer = stdopentracing.GlobalTracer()
+	}
+
+	return
+}
+
+func initZipkin(serviceName, httpPort, zipkinV2URL string, logger log.Logger) (zipkinTracer *zipkin.Tracer) {
+	var (
+		err           error
+		hostPort      = fmt.Sprintf("localhost:%s", httpPort)
+		useNoopTracer = (zipkinV2URL == "")
+		reporter      = zipkinhttp.NewReporter(zipkinV2URL)
+	)
+	zEP, _ := zipkin.NewEndpoint(serviceName, hostPort)
+	zipkinTracer, err = zipkin.NewTracer(reporter, zipkin.WithLocalEndpoint(zEP), zipkin.WithNoopTracer(useNoopTracer))
+	if err != nil {
+		logger.Log("err", err)
+		os.Exit(1)
+	}
+	if !useNoopTracer {
+		logger.Log("tracer", "Zipkin", "type", "Native", "URL", zipkinV2URL)
+	}
+
+	return
+}
+
+func NewServer(nameSpace, serviceName string, db *sqlx.DB, zipkinTracer *zipkin.Tracer, secret string, logger log.Logger) service.AuthnService {
+	var (
+		requestCount   metrics.Counter
+		requestLatency metrics.Histogram
+		fieldKeys      []string
+	)
+	{
+		fieldKeys = []string{"method", "error"}
+		requestCount = prometheus.NewCounterFrom(stdprometheus.CounterOpts{Namespace: nameSpace, Subsystem: serviceName, Name: "request_count", Help: "Number of requests received."}, fieldKeys)
+		requestLatency = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{Namespace: nameSpace, Subsystem: serviceName, Name: "request_latency_microseconds", Help: "Total duration of requests in microseconds."}, fieldKeys)
+	}
+
+	repo := model.UserRepositoryMiddleware(zipkinTracer)(postgres.New(db, logger))
+	hasher := bcrypt.New()
+	idp := jwt.New(secret)
+
+	svc := service.New(logger, requestCount, requestLatency, repo, hasher, idp)
+	return svc
+}
+
+func startHTTPServer(endpoints endpoints.Endpoints, tracer stdopentracing.Tracer, zipkinTracer *zipkin.Tracer, port string, certFile string, keyFile string, logger log.Logger, errs chan error) {
+	p := fmt.Sprintf(":%s", port)
+	if certFile != "" || keyFile != "" {
+		level.Info(logger).Log("protocol", "HTTP", "exposed", port, "certFile", certFile, "keyFile", keyFile)
+		errs <- http.ListenAndServeTLS(p, certFile, keyFile, transports.NewHTTPHandler(endpoints, tracer, zipkinTracer, logger))
+	} else {
+		level.Info(logger).Log("protocol", "HTTP", "exposed", port)
+		errs <- http.ListenAndServe(p, transports.NewHTTPHandler(endpoints, tracer, zipkinTracer, logger))
 	}
 }
 
-func startGRPCServer(cfg config, grpcServer pb.AuthnServer, logger log.Logger, errs chan error) {
-	p := fmt.Sprintf(":%s", cfg.grpcPort)
+func startGRPCServer(endpoints endpoints.Endpoints, tracer stdopentracing.Tracer, zipkinTracer *zipkin.Tracer, port string, certFile string, keyFile string, logger log.Logger, errs chan error) {
+	p := fmt.Sprintf(":%s", port)
 	listener, err := net.Listen("tcp", p)
 	if err != nil {
-		level.Error(logger).Log("serviceName", cfg.serviceName, "protocol", "GRPC", "listen", cfg.grpcPort, "err", err)
+		level.Error(logger).Log("protocol", "GRPC", "listen", port, "err", err)
 		os.Exit(1)
 	}
 
 	var server *grpc.Server
-	if cfg.serverCert != "" || cfg.serverKey != "" {
-		creds, err := credentials.NewServerTLSFromFile(cfg.serverCert, cfg.serverKey)
+	if certFile != "" || keyFile != "" {
+		creds, err := credentials.NewServerTLSFromFile(certFile, keyFile)
 		if err != nil {
-			level.Error(logger).Log("serviceName", cfg.serviceName, "certificates", creds, "err", err)
+			level.Error(logger).Log("protocol", "GRPC", "certificates", creds, "err", err)
 			os.Exit(1)
 		}
-		level.Info(logger).Log("serviceName", cfg.serviceName, "protocol", "GRPC", "exposed", cfg.grpcPort, "certFile", cfg.serverCert, "keyFile", cfg.serverKey)
+		level.Info(logger).Log("protocol", "GRPC", "exposed", port, "certFile", certFile, "keyFile", keyFile)
 		server = grpc.NewServer(grpc.UnaryInterceptor(kitgrpc.Interceptor), grpc.Creds(creds))
 	} else {
-		level.Info(logger).Log("serviceName", cfg.serviceName, "protocol", "GRPC", "exposed", cfg.grpcPort)
+		level.Info(logger).Log("protocol", "GRPC", "protocol", "GRPC", "exposed", port)
 		server = grpc.NewServer(grpc.UnaryInterceptor(kitgrpc.Interceptor))
 	}
-	pb.RegisterAuthnServer(server, grpcServer)
+	pb.RegisterAuthnServer(server, transports.MakeGRPCServer(endpoints, tracer, zipkinTracer, logger))
 	grpc_health_v1.RegisterHealthServer(server, &service.HealthImpl{})
 	errs <- server.Serve(listener)
 }
