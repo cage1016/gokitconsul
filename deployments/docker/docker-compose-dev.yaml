@@ -23,6 +23,44 @@ services:
     networks:
       - net
 
+  authn-db:
+    image: postgres:10.8-alpine
+    container_name: gokitconsul-authn-db
+    restart: on-failure
+    environment:
+      POSTGRES_DB: authn
+      POSTGRES_USER: gokitconsul
+      POSTGRES_PASSWORD: gokitconsul
+    ports:
+      - 5432:5432
+    networks:
+      - net
+
+  authn:
+    image: cage1016/gokitconsul-authn:latest
+    container_name: gokitconsul-authn
+    depends_on:
+      - authn-db
+    restart: on-failure
+    ports:
+      - 6020:6020
+      - 6021:6021
+    environment:
+      QS_AUTHN_LOG_LEVEL: info
+      QS_AUTHN_DB_HOST: authn-db
+      QS_AUTHN_DB_PORT: 5432
+      QS_AUTHN_DB: authn
+      QS_AUTHN_DB_USER: gokitconsul
+      QS_AUTHN_DB_PASS: gokitconsul
+      QS_AUTHN_HTTP_PORT: 6020
+      QS_AUTHN_GRPC_PORT: 6021
+      QS_AUTHN_SECRET: secret
+      QS_CONSULT_HOST: consul
+      QS_CONSULT_PORT: 8500
+      QS_ZIPKIN_V2_URL: http://zipkin:9411/api/v2/spans
+    networks:
+      - net
+
   foosvc:
     image: cage1016/gokitconsul-foosvc:latest
     container_name: gokitconsul-foosvc

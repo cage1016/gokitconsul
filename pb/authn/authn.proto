@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package pb;
+
+// The Authn service definition.
+service Authn {
+
+    rpc Login (LoginRequest) returns (LoginReply) {
+    }
+
+    rpc Logout (LogoutRequest) returns (LogoutReply) {
+    }
+
+    rpc Add (AddRequest) returns (AddReply) {
+    }
+
+    rpc BatchAdd (BatchAddRequest) returns (BatchAddReply) {
+    }
+}
+
+message UserRecord {
+    string email = 1;
+    string password = 2;
+}
+
+message LoginRequest {
+    UserRecord user = 1;
+}
+
+message LoginReply {
+    string token = 1;
+    string err = 2;
+}
+
+message LogoutRequest {
+    UserRecord user = 1;
+}
+
+message LogoutReply {
+    string err = 1;
+}
+
+message AddRequest {
+    UserRecord user = 1;
+}
+
+message AddReply {
+    string err = 1;
+}
+
+message BatchAddRequest {
+    repeated UserRecord users = 1;
+}
+
+message BatchAddReply {
+    string err = 1;
+}

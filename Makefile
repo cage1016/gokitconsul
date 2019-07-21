@@ -1,5 +1,5 @@
 BUILD_DIR = build
-SERVICES = gateway addsvc foosvc
+SERVICES = gateway addsvc foosvc authn
 DOCKERS = $(addprefix docker_,$(SERVICES))
 DOCKERS_DEV = $(addprefix docker_dev_,$(SERVICES))
 REBUILD = $(addprefix rebuild_,$(SERVICES))
