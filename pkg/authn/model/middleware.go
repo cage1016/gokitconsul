@@ -3,12 +3,11 @@ package model
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/openzipkin/zipkin-go"
 	"github.com/openzipkin/zipkin-go/model"
-	"time"
 )
-
-//var _ UserRepository = (*userRepositoryMiddleware)(nil)
 
 const (
 	saveOp         = "save_op"
@@ -16,23 +15,42 @@ const (
 )
 
 type userRepositoryMiddleware struct {
-	tracer *zipkin.Tracer
-	next   UserRepository
+	serviceName string
+	hostPort    string
+	tracer      *zipkin.Tracer
+	next        UserRepository
 }
 
 // UserRepositoryMiddleware tracks request and their latency, and adds spans
 // to context.
-func UserRepositoryMiddleware(tracer *zipkin.Tracer) Middleware {
+func UserRepositoryMiddleware(tracer *zipkin.Tracer, serviceName string, hostPort string) Middleware {
 	return func(next UserRepository) UserRepository {
 		return userRepositoryMiddleware{
-			tracer: tracer,
-			next:   next,
+			serviceName: serviceName,
+			hostPort:    hostPort,
+			tracer:      tracer,
+			next:        next,
 		}
 	}
 }
 
+func (urm userRepositoryMiddleware) createSpan(ctx context.Context, tracer *zipkin.Tracer, opName string) zipkin.Span {
+	var sc model.SpanContext
+	if parentSpan := zipkin.SpanFromContext(ctx); parentSpan != nil {
+		sc = parentSpan.Context()
+		ep, _ := zipkin.NewEndpoint(urm.serviceName, urm.hostPort)
+		return tracer.StartSpan(
+			opName,
+			zipkin.Parent(sc),
+			zipkin.RemoteEndpoint(ep),
+		)
+	}
+
+	return tracer.StartSpan(opName)
+}
+
 func (urm userRepositoryMiddleware) Save(ctx context.Context, user User) error {
-	span := createSpan(ctx, urm.tracer, saveOp)
+	span := urm.createSpan(ctx, urm.tracer, saveOp)
 	defer span.Finish()
 
 	span.Tag("user", fmt.Sprintf("%v", user))
@@ -47,7 +65,7 @@ func (urm userRepositoryMiddleware) Save(ctx context.Context, user User) error {
 }
 
 func (urm userRepositoryMiddleware) RetrieveByID(ctx context.Context, id string) (User, error) {
-	span := createSpan(ctx, urm.tracer, retrieveByIDOp)
+	span := urm.createSpan(ctx, urm.tracer, retrieveByIDOp)
 	defer span.Finish()
 
 	span.Tag("id", fmt.Sprintf("%v", id))
@@ -59,19 +77,4 @@ func (urm userRepositoryMiddleware) RetrieveByID(ctx context.Context, id string)
 	}
 	span.Annotate(time.Now(), "RetrieveByID:end")
 	return user, err
-}
-
-func createSpan(ctx context.Context, tracer *zipkin.Tracer, opName string) zipkin.Span {
-	var sc model.SpanContext
-	if parentSpan := zipkin.SpanFromContext(ctx); parentSpan != nil {
-		sc = parentSpan.Context()
-		ep, _ := zipkin.NewEndpoint("postgres", "authn-db:5432")
-		return tracer.StartSpan(
-			opName,
-			zipkin.Parent(sc),
-			zipkin.RemoteEndpoint(ep),
-		)
-	}
-
-	return tracer.StartSpan(opName)
 }

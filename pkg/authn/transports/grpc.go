@@ -2,12 +2,10 @@ package transports
 
 import (
 	"context"
-	"github.com/cage1016/gokitconsul/pkg/authn/model"
 	"time"
 
-	pb "github.com/cage1016/gokitconsul/pb/authn"
-	"github.com/cage1016/gokitconsul/pkg/authn/endpoints"
-	"github.com/cage1016/gokitconsul/pkg/authn/service"
+	stdjwt "github.com/dgrijalva/jwt-go"
+	kitjwt "github.com/go-kit/kit/auth/jwt"
 	"github.com/go-kit/kit/circuitbreaker"
 	"github.com/go-kit/kit/endpoint"
 	"github.com/go-kit/kit/log"
@@ -22,6 +20,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	pb "github.com/cage1016/gokitconsul/pb/authn"
+	"github.com/cage1016/gokitconsul/pkg/authn/endpoints"
+	"github.com/cage1016/gokitconsul/pkg/authn/model"
+	"github.com/cage1016/gokitconsul/pkg/authn/service"
 )
 
 type grpcServer struct {
@@ -103,7 +106,10 @@ func MakeGRPCServer(endpoints endpoints.Endpoints, otTracer stdopentracing.Trace
 			endpoints.AddEndpoint,
 			decodeGRPCAddRequest,
 			encodeGRPCAddResponse,
-			append(options, grpctransport.ServerBefore(opentracing.GRPCToContext(otTracer, "Add", logger)))...,
+			append(options, grpctransport.ServerBefore(
+				opentracing.GRPCToContext(otTracer, "Add", logger)),
+				grpctransport.ServerBefore(kitjwt.GRPCToContext()),
+			)...,
 		),
 
 		batchAdd: grpctransport.NewServer(
@@ -191,7 +197,7 @@ func encodeGRPCBatchAddResponse(_ context.Context, grpcReply interface{}) (res i
 // of the conn. The caller is responsible for constructing the conn, and
 // eventually closing the underlying transport. We bake-in certain middlewares,
 // implementing the client library pattern.
-func NewGRPCClient(conn *grpc.ClientConn, otTracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, logger log.Logger) service.AuthnService { // We construct a single ratelimiter middleware, to limit the total outgoing
+func NewGRPCClient(conn *grpc.ClientConn, secret string, otTracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, logger log.Logger) service.AuthnService { // We construct a single ratelimiter middleware, to limit the total outgoing
 	// QPS from this client to all methods on the remote instance. We also
 	// construct per-endpoint circuitbreaker middlewares to demonstrate how
 	// that's done, although they could easily be combined into a single breaker
@@ -211,6 +217,9 @@ func NewGRPCClient(conn *grpc.ClientConn, otTracer stdopentracing.Tracer, zipkin
 	options := []grpctransport.ClientOption{
 		zipkinClient,
 	}
+
+	// jwtMiddleware
+	jwtSingerMiddleware := kitjwt.NewSigner("kid-header", []byte(secret), stdjwt.SigningMethodHS256, kitjwt.StandardClaimsFactory())
 
 	// The Login endpoint is the same thing, with slightly different
 	// middlewares to demonstrate how to specialize per-endpoint.
@@ -252,6 +261,7 @@ func NewGRPCClient(conn *grpc.ClientConn, otTracer stdopentracing.Tracer, zipkin
 			Name:    "Logout",
 			Timeout: 30 * time.Second,
 		}))(logoutEndpoint)
+		logoutEndpoint = jwtSingerMiddleware(logoutEndpoint)
 	}
 
 	// The Add endpoint is the same thing, with slightly different
@@ -265,7 +275,10 @@ func NewGRPCClient(conn *grpc.ClientConn, otTracer stdopentracing.Tracer, zipkin
 			encodeGRPCAddRequest,
 			decodeGRPCAddResponse,
 			pb.AddReply{},
-			append(options, grpctransport.ClientBefore(opentracing.ContextToGRPC(otTracer, logger)))...,
+			append(options, grpctransport.ClientBefore(
+				opentracing.ContextToGRPC(otTracer, logger)),
+				grpctransport.ClientBefore(kitjwt.ContextToGRPC()),
+			)...,
 		).Endpoint()
 		addEndpoint = opentracing.TraceClient(otTracer, "Add")(addEndpoint)
 		addEndpoint = limiter(addEndpoint)
@@ -273,6 +286,7 @@ func NewGRPCClient(conn *grpc.ClientConn, otTracer stdopentracing.Tracer, zipkin
 			Name:    "Add",
 			Timeout: 30 * time.Second,
 		}))(addEndpoint)
+		addEndpoint = jwtSingerMiddleware(addEndpoint)
 	}
 
 	// The BatchAdd endpoint is the same thing, with slightly different
@@ -294,6 +308,7 @@ func NewGRPCClient(conn *grpc.ClientConn, otTracer stdopentracing.Tracer, zipkin
 			Name:    "BatchAdd",
 			Timeout: 30 * time.Second,
 		}))(batchAddEndpoint)
+		batchAddEndpoint = jwtSingerMiddleware(batchAddEndpoint)
 	}
 
 	return endpoints.Endpoints{
@@ -394,6 +409,8 @@ func grpcEncodeError(err error) error {
 	case service.ErrNotFound:
 		return status.Error(codes.NotFound, err.Error())
 	case service.ErrUnauthorizedAccess:
+		return status.Error(codes.Unauthenticated, err.Error())
+	case kitjwt.ErrTokenContextMissing, kitjwt.ErrTokenExpired, kitjwt.ErrTokenInvalid:
 		return status.Error(codes.Unauthenticated, err.Error())
 	default:
 		return status.Error(codes.Internal, "internal server error")

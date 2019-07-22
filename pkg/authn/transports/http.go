@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/cage1016/gokitconsul/pkg/authn/model"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	kitjwt "github.com/go-kit/kit/auth/jwt"
 	"github.com/go-kit/kit/circuitbreaker"
 	"github.com/go-kit/kit/endpoint"
 	"github.com/go-kit/kit/log"
@@ -29,6 +29,7 @@ import (
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc/status"
 
+	"github.com/cage1016/gokitconsul/pkg/authn/model"
 	"github.com/cage1016/gokitconsul/pkg/authn/endpoints"
 	"github.com/cage1016/gokitconsul/pkg/authn/service"
 )
@@ -75,19 +76,28 @@ func NewHTTPHandler(endpoints endpoints.Endpoints, otTracer stdopentracing.Trace
 		endpoints.LogoutEndpoint,
 		decodeHTTPLogoutRequest,
 		httptransport.EncodeJSONResponse,
-		append(options, httptransport.ServerBefore(opentracing.HTTPToContext(otTracer, "Logout", logger)))...,
+		append(options, httptransport.ServerBefore(
+			opentracing.HTTPToContext(otTracer, "Logout", logger),
+			kitjwt.HTTPToContext(),
+		))...,
 	))
 	m.Handle("/add", httptransport.NewServer(
 		endpoints.AddEndpoint,
 		decodeHTTPAddRequest,
 		httptransport.EncodeJSONResponse,
-		append(options, httptransport.ServerBefore(opentracing.HTTPToContext(otTracer, "Add", logger)))...,
+		append(options, httptransport.ServerBefore(
+			opentracing.HTTPToContext(otTracer, "Add", logger),
+			kitjwt.HTTPToContext(),
+		))...,
 	))
 	m.Handle("/batch_add", httptransport.NewServer(
 		endpoints.BatchAddEndpoint,
 		decodeHTTPBatchAddRequest,
 		httptransport.EncodeJSONResponse,
-		append(options, httptransport.ServerBefore(opentracing.HTTPToContext(otTracer, "BatchAdd", logger)))...,
+		append(options, httptransport.ServerBefore(
+			opentracing.HTTPToContext(otTracer, "BatchAdd", logger),
+			kitjwt.HTTPToContext(),
+		))...,
 	))
 	m.Handle("/metrics", promhttp.Handler())
 	return m
@@ -381,6 +391,8 @@ func httpEncodeError(_ context.Context, err error, w http.ResponseWriter) {
 				w.WriteHeader(http.StatusUnauthorized)
 			case service.ErrNotFound:
 				w.WriteHeader(http.StatusNotFound)
+			case kitjwt.ErrTokenContextMissing, kitjwt.ErrTokenExpired, kitjwt.ErrTokenInvalid:
+				w.WriteHeader(http.StatusUnauthorized)
 			default:
 				switch err.(type) {
 				case *json.SyntaxError:

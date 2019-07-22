@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/cage1016/gokitconsul/pkg/authn/model"
-	"github.com/cage1016/gokitconsul/pkg/authn/service"
+	stdjwt "github.com/dgrijalva/jwt-go"
+	kitjwt "github.com/go-kit/kit/auth/jwt"
 	"github.com/go-kit/kit/circuitbreaker"
 	"github.com/go-kit/kit/endpoint"
 	"github.com/go-kit/kit/log"
@@ -17,6 +17,9 @@ import (
 	stdzipkin "github.com/openzipkin/zipkin-go"
 	"github.com/sony/gobreaker"
 	"golang.org/x/time/rate"
+
+	"github.com/cage1016/gokitconsul/pkg/authn/model"
+	"github.com/cage1016/gokitconsul/pkg/authn/service"
 )
 
 // Endpoints collects all of the endpoints that compose the authn service. It's
@@ -30,7 +33,18 @@ type Endpoints struct {
 }
 
 // New return a new instance of the endpoint that wraps the provided service.
-func New(svc service.AuthnService, logger log.Logger, duration metrics.Histogram, otTracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer) (ep Endpoints) {
+func New(
+	svc service.AuthnService,
+	duration metrics.Histogram,
+	otTracer stdopentracing.Tracer,
+	zipkinTracer *stdzipkin.Tracer,
+	secret string,
+	logger log.Logger,
+) (ep Endpoints) {
+	jwtKeyFunc := func(token *stdjwt.Token) (interface{}, error) {
+		return []byte(secret), nil
+	}
+
 	var loginEndpoint endpoint.Endpoint
 	{
 		method := "login"
@@ -54,6 +68,7 @@ func New(svc service.AuthnService, logger log.Logger, duration metrics.Histogram
 		logoutEndpoint = zipkin.TraceEndpoint(zipkinTracer, method)(logoutEndpoint)
 		logoutEndpoint = LoggingMiddleware(log.With(logger, "method", method))(logoutEndpoint)
 		logoutEndpoint = InstrumentingMiddleware(duration.With("method", method))(logoutEndpoint)
+		logoutEndpoint = kitjwt.NewParser(jwtKeyFunc, stdjwt.SigningMethodHS256, kitjwt.StandardClaimsFactory)(logoutEndpoint)
 		ep.LogoutEndpoint = logoutEndpoint
 	}
 
@@ -67,6 +82,7 @@ func New(svc service.AuthnService, logger log.Logger, duration metrics.Histogram
 		addEndpoint = zipkin.TraceEndpoint(zipkinTracer, method)(addEndpoint)
 		addEndpoint = LoggingMiddleware(log.With(logger, "method", method))(addEndpoint)
 		addEndpoint = InstrumentingMiddleware(duration.With("method", method))(addEndpoint)
+		addEndpoint = kitjwt.NewParser(jwtKeyFunc, stdjwt.SigningMethodHS256, kitjwt.StandardClaimsFactory)(addEndpoint)
 		ep.AddEndpoint = addEndpoint
 	}
 
@@ -80,6 +96,7 @@ func New(svc service.AuthnService, logger log.Logger, duration metrics.Histogram
 		batchAddEndpoint = zipkin.TraceEndpoint(zipkinTracer, method)(batchAddEndpoint)
 		batchAddEndpoint = LoggingMiddleware(log.With(logger, "method", method))(batchAddEndpoint)
 		batchAddEndpoint = InstrumentingMiddleware(duration.With("method", method))(batchAddEndpoint)
+		batchAddEndpoint = kitjwt.NewParser(jwtKeyFunc, stdjwt.SigningMethodHS256, kitjwt.StandardClaimsFactory)(batchAddEndpoint)
 		ep.BatchAddEndpoint = batchAddEndpoint
 	}
 

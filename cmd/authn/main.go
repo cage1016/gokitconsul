@@ -156,13 +156,10 @@ func main() {
 
 	tracer := initOpentracing(cfg.serviceName, cfg.httpPort, cfg.zipkinV1URL, cfg.zipkinV2URL, cfg.lightstepToken, cfg.appdashAddr, logger)
 	zipkinTracer := initZipkin(cfg.serviceName, cfg.httpPort, cfg.zipkinV2URL, logger)
+	duration := prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{Namespace: cfg.nameSpace, Subsystem: cfg.serviceName, Name: "request_duration_ns", Help: "Request duration in nanoseconds."}, []string{"method", "success"})
 
 	service := NewServer(cfg.nameSpace, cfg.serviceName, db, zipkinTracer, cfg.secret, logger)
-	var duration metrics.Histogram
-	{
-		duration = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{Namespace: cfg.nameSpace, Subsystem: cfg.serviceName, Name: "request_duration_ns", Help: "Request duration in nanoseconds."}, []string{"method", "success"})
-	}
-	endpoints := endpoints.New(service, logger, duration, tracer, zipkinTracer)
+	endpoints := endpoints.New(service, duration, tracer, zipkinTracer, cfg.secret, logger)
 	errs := make(chan error, 2)
 
 	go startHTTPServer(endpoints, tracer, zipkinTracer, cfg.httpPort, cfg.serverCert, cfg.serverKey, logger, errs)
@@ -245,7 +242,6 @@ func connectToDB(cfg postgres.Config, logger log.Logger) *sqlx.DB {
 		)
 		os.Exit(1)
 	}
-	level.Info(logger).Log("connectToDB", "ok")
 	return db
 }
 
@@ -315,7 +311,7 @@ func NewServer(nameSpace, serviceName string, db *sqlx.DB, zipkinTracer *zipkin.
 		requestLatency = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{Namespace: nameSpace, Subsystem: serviceName, Name: "request_latency_microseconds", Help: "Total duration of requests in microseconds."}, fieldKeys)
 	}
 
-	repo := model.UserRepositoryMiddleware(zipkinTracer)(postgres.New(db, logger))
+	repo := model.UserRepositoryMiddleware(zipkinTracer, "postgres", "authn-db:5432")(postgres.New(db, logger))
 	hasher := bcrypt.New()
 	idp := jwt.New(secret)
 
