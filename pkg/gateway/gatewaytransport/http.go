@@ -1,11 +1,12 @@
 package gatewaytransport
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"time"
 
+	stdjwt "github.com/dgrijalva/jwt-go"
+	kitjwt "github.com/go-kit/kit/auth/jwt"
 	"github.com/go-kit/kit/endpoint"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/sd"
@@ -30,7 +31,11 @@ import (
 	authntransports "github.com/cage1016/gokitconsul/pkg/authn/transports"
 )
 
-func MakeHandler(_ context.Context, client consul.Client, retryMax, retryTimeout int64, tracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, logger log.Logger) http.Handler {
+func MakeHandler(client consul.Client, secret string, retryMax, retryTimeout int64, tracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, logger log.Logger) http.Handler {
+	jwtKeyFunc := func(token *stdjwt.Token) (interface{}, error) {
+		return []byte(secret), nil
+	}
+
 	r := mux.NewRouter()
 
 	// addsvc
@@ -91,25 +96,32 @@ func MakeHandler(_ context.Context, client consul.Client, retryMax, retryTimeout
 			instancer   = consulsd.NewInstancer(client, logger, "grpc.health.v1.authn", tags, passingOnly)
 		)
 		{
-			factory := authnFactory(authnendpoint.MakeLoginEndpoint, tracer, zipkinTracer, logger)
+			factory := authnFactory(authnendpoint.MakeLoginEndpoint, secret, tracer, zipkinTracer, logger)
 			endpointer := sd.NewEndpointer(instancer, factory, logger)
 			balancer := lb.NewRoundRobin(endpointer)
 			retry := lb.Retry(int(retryMax), time.Duration(retryTimeout)*time.Millisecond, balancer)
 			endpoints.LoginEndpoint = retry
 		}
 		{
-			factory := authnFactory(authnendpoint.MakeLogoutEndpoint, tracer, zipkinTracer, logger)
+			factory := authnFactory(authnendpoint.MakeLogoutEndpoint, secret, tracer, zipkinTracer, logger)
 			endpointer := sd.NewEndpointer(instancer, factory, logger)
 			balancer := lb.NewRoundRobin(endpointer)
 			retry := lb.Retry(int(retryMax), time.Duration(retryTimeout)*time.Millisecond, balancer)
-			endpoints.LogoutEndpoint = retry
+			endpoints.LogoutEndpoint = kitjwt.NewParser(jwtKeyFunc, stdjwt.SigningMethodHS256, kitjwt.StandardClaimsFactory)(retry)
 		}
 		{
-			factory := authnFactory(authnendpoint.MakeAddEndpoint, tracer, zipkinTracer, logger)
+			factory := authnFactory(authnendpoint.MakeAddEndpoint, secret, tracer, zipkinTracer, logger)
 			endpointer := sd.NewEndpointer(instancer, factory, logger)
 			balancer := lb.NewRoundRobin(endpointer)
 			retry := lb.Retry(int(retryMax), time.Duration(retryTimeout)*time.Millisecond, balancer)
-			endpoints.AddEndpoint = retry
+			endpoints.AddEndpoint = kitjwt.NewParser(jwtKeyFunc, stdjwt.SigningMethodHS256, kitjwt.StandardClaimsFactory)(retry)
+		}
+		{
+			factory := authnFactory(authnendpoint.MakeBatchAddEndpoint, secret, tracer, zipkinTracer, logger)
+			endpointer := sd.NewEndpointer(instancer, factory, logger)
+			balancer := lb.NewRoundRobin(endpointer)
+			retry := lb.Retry(int(retryMax), time.Duration(retryTimeout)*time.Millisecond, balancer)
+			endpoints.BatchAddEndpoint = kitjwt.NewParser(jwtKeyFunc, stdjwt.SigningMethodHS256, kitjwt.StandardClaimsFactory)(retry)
 		}
 		r.PathPrefix("/authn").Handler(http.StripPrefix("/authn", authntransports.NewHTTPHandler(endpoints, tracer, zipkinTracer, logger)))
 	}
@@ -177,7 +189,7 @@ func fooSvcFactory(makeEndpoint func(foosvcservice.FoosvcService) endpoint.Endpo
 	}
 }
 
-func authnFactory(makeEndpoint func(authnservice.AuthnService) endpoint.Endpoint, tracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, logger log.Logger) sd.Factory {
+func authnFactory(makeEndpoint func(authnservice.AuthnService) endpoint.Endpoint, secret string, tracer stdopentracing.Tracer, zipkinTracer *stdzipkin.Tracer, logger log.Logger) sd.Factory {
 	return func(instance string) (endpoint.Endpoint, io.Closer, error) {
 		// We could just as easily use the HTTP or Thrift client package to make
 		// the connection to addsvc. We've chosen gRPC arbitrarily. Note that
@@ -188,7 +200,7 @@ func authnFactory(makeEndpoint func(authnservice.AuthnService) endpoint.Endpoint
 		if err != nil {
 			return nil, nil, err
 		}
-		service := authntransports.NewGRPCClient(conn, tracer, zipkinTracer, logger)
+		service := authntransports.NewGRPCClient(conn, secret, tracer, zipkinTracer, logger)
 
 		// Notice that the addsvc gRPC client converts the connection to a
 		// complete addsvc, and we just throw away everything except the method

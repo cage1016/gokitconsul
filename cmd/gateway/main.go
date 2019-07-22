@@ -15,7 +15,6 @@ import (
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
-	"github.com/go-kit/kit/sd/consul"
 	consulsd "github.com/go-kit/kit/sd/consul"
 	kitgrpc "github.com/go-kit/kit/transport/grpc"
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
@@ -40,7 +39,8 @@ import (
 )
 
 const (
-	serviceName       = "gateway"
+	defServiceName    = "gateway"
+	defSecret         = "secret"
 	defLogLevel       = "error"
 	defHTTPPort       = "8000"
 	defGRPCPort       = "8001"
@@ -55,6 +55,8 @@ const (
 	defAppdashAddr    = ""
 	defConsulHost     = "localhost"
 	defConsulPort     = "8500"
+	envServiceName    = "QS_GATEWAY_SERVICE_NAME"
+	envSecret         = "QS_GATEWAY_SECRET"
 	envLogLevel       = "QS_GATEWAY_LOG_LEVEL"
 	envHTTPPort       = "QS_GATEWAY_HTTP_PORT"
 	envGRPCPort       = "QS_GATEWAY_GRPC_PORT"
@@ -85,6 +87,8 @@ type config struct {
 	clientTLS      bool
 	consulHost     string
 	consultPort    string
+	serviceName    string
+	secret         string
 	httpPort       string
 	grpcPort       string
 	serverCert     string
@@ -107,68 +111,13 @@ func main() {
 	}
 	cfg := loadConfig(logger)
 
-	client := newConsulClient(cfg.consulHost, cfg.consultPort, logger)
+	tracer := initOpentracing(cfg.serviceName, cfg.httpPort, cfg.zipkinV1URL, cfg.zipkinV2URL, cfg.lightstepToken, cfg.appdashAddr, logger)
+	zipkinTracer := initZipkin(cfg.serviceName, cfg.httpPort, cfg.zipkinV2URL, logger)
 
-	var tracer stdopentracing.Tracer
-	{
-		if cfg.zipkinV1URL != "" && cfg.zipkinV2URL == "" {
-			logger.Log("tracer", "Zipkin", "type", "OpenTracing", "URL", cfg.zipkinV1URL)
-			collector, err := zipkinot.NewHTTPCollector(cfg.zipkinV1URL)
-			if err != nil {
-				logger.Log("err", err)
-				os.Exit(1)
-			}
-			defer collector.Close()
-			var (
-				debug       = false
-				hostPort    = fmt.Sprintf("localhost:%s", cfg.httpPort)
-				serviceName = serviceName
-			)
-			recorder := zipkinot.NewRecorder(collector, debug, hostPort, serviceName)
-			tracer, err = zipkinot.NewTracer(recorder)
-			if err != nil {
-				logger.Log("err", err)
-				os.Exit(1)
-			}
-		} else if cfg.lightstepToken != "" {
-			logger.Log("tracer", "LightStep")
-			tracer = lightstep.NewTracer(lightstep.Options{AccessToken: cfg.lightstepToken})
-			defer lightstep.FlushLightStepTracer(tracer)
-		} else if cfg.appdashAddr != "" {
-			logger.Log("tracer", "Appdash", "addr", cfg.appdashAddr)
-			tracer = appdashot.NewTracer(appdash.NewRemoteCollector(cfg.appdashAddr))
-		} else {
-			tracer = stdopentracing.GlobalTracer()
-		}
-	}
-
-	var zipkinTracer *zipkin.Tracer
-	{
-		var (
-			err           error
-			hostPort      = fmt.Sprintf("localhost:%s", cfg.httpPort)
-			serviceName   = serviceName
-			useNoopTracer = (cfg.zipkinV2URL == "")
-			reporter      = zipkinhttp.NewReporter(cfg.zipkinV2URL)
-		)
-		defer reporter.Close()
-		zEP, _ := zipkin.NewEndpoint(serviceName, hostPort)
-		zipkinTracer, err = zipkin.NewTracer(reporter, zipkin.WithLocalEndpoint(zEP), zipkin.WithNoopTracer(useNoopTracer))
-		if err != nil {
-			logger.Log("err", err)
-			os.Exit(1)
-		}
-		if !useNoopTracer {
-			logger.Log("tracer", "Zipkin", "type", "Native", "URL", cfg.zipkinV2URL)
-		}
-	}
-
-	ctx := context.Background()
-	consultAddress := fmt.Sprintf("%s:%s", cfg.consulHost, cfg.consultPort)
 	errs := make(chan error, 2)
 
-	go startHTTPServer(ctx, client, cfg.retryMax, cfg.retryTimeout, tracer, zipkinTracer, cfg.httpPort, cfg.serverCert, cfg.serverKey, logger, errs)
-	go startGRPCServer(consultAddress, tracer, zipkinTracer, cfg.grpcPort, cfg.serverCert, cfg.serverKey, logger, errs)
+	go startHTTPServer(cfg.consulHost, cfg.consultPort, cfg.secret, cfg.retryMax, cfg.retryTimeout, tracer, zipkinTracer, cfg.httpPort, cfg.serverCert, cfg.serverKey, logger, errs)
+	go startGRPCServer(cfg.consulHost, cfg.consultPort, tracer, zipkinTracer, cfg.grpcPort, cfg.serverCert, cfg.serverKey, logger, errs)
 
 	go func() {
 		c := make(chan os.Signal)
@@ -177,7 +126,7 @@ func main() {
 	}()
 
 	err := <-errs
-	level.Info(logger).Log("serviceName", serviceName, "terminated", err)
+	level.Info(logger).Log("serviceName", cfg.serviceName, "terminated", err)
 }
 
 func loadConfig(logger log.Logger) (cfg config) {
@@ -198,6 +147,8 @@ func loadConfig(logger log.Logger) (cfg config) {
 
 	cfg.logLevel = env(envLogLevel, defLogLevel)
 	cfg.clientTLS = tls
+	cfg.serviceName = env(envServiceName, defServiceName)
+	cfg.secret = env(envSecret, defSecret)
 	cfg.httpPort = env(envHTTPPort, defHTTPPort)
 	cfg.grpcPort = env(envGRPCPort, defGRPCPort)
 	cfg.serverCert = env(envServerCert, defServerCert)
@@ -230,18 +181,75 @@ func newConsulClient(consulHost, consulPort string, logger log.Logger) consulsd.
 	return client
 }
 
-func startHTTPServer(ctx context.Context, client consul.Client, retryMax, retryTimeout int64, tracer stdopentracing.Tracer, zipkinTracer *opzipkin.Tracer, port string, certFile string, keyFile string, logger log.Logger, errs chan error) {
+func initOpentracing(serviceName, httpPort, zipkinV1URL, zipkinV2URL, lightstepToken, appdashAddr string, logger log.Logger) (tracer stdopentracing.Tracer) {
+	if zipkinV1URL != "" && zipkinV2URL == "" {
+		logger.Log("tracer", "Zipkin", "type", "OpenTracing", "URL", zipkinV1URL)
+		collector, err := zipkinot.NewHTTPCollector(zipkinV1URL)
+		if err != nil {
+			logger.Log("err", err)
+			os.Exit(1)
+		}
+		defer collector.Close()
+		var (
+			debug       = false
+			hostPort    = fmt.Sprintf("localhost:%s", httpPort)
+			serviceName = serviceName
+		)
+		recorder := zipkinot.NewRecorder(collector, debug, hostPort, serviceName)
+		tracer, err = zipkinot.NewTracer(recorder)
+		if err != nil {
+			logger.Log("err", err)
+			os.Exit(1)
+		}
+	} else if lightstepToken != "" {
+		logger.Log("tracer", "LightStep")
+		tracer = lightstep.NewTracer(lightstep.Options{AccessToken: lightstepToken})
+		defer lightstep.FlushLightStepTracer(tracer)
+	} else if appdashAddr != "" {
+		logger.Log("tracer", "Appdash", "addr", appdashAddr)
+		tracer = appdashot.NewTracer(appdash.NewRemoteCollector(appdashAddr))
+	} else {
+		tracer = stdopentracing.GlobalTracer()
+	}
+
+	return
+}
+
+func initZipkin(serviceName, httpPort, zipkinV2URL string, logger log.Logger) (zipkinTracer *zipkin.Tracer) {
+	var (
+		err           error
+		hostPort      = fmt.Sprintf("localhost:%s", httpPort)
+		useNoopTracer = (zipkinV2URL == "")
+		reporter      = zipkinhttp.NewReporter(zipkinV2URL)
+	)
+	zEP, _ := zipkin.NewEndpoint(serviceName, hostPort)
+	zipkinTracer, err = zipkin.NewTracer(reporter, zipkin.WithLocalEndpoint(zEP), zipkin.WithNoopTracer(useNoopTracer))
+	if err != nil {
+		logger.Log("err", err)
+		os.Exit(1)
+	}
+	if !useNoopTracer {
+		logger.Log("tracer", "Zipkin", "type", "Native", "URL", zipkinV2URL)
+	}
+
+	return
+}
+
+func startHTTPServer(consulHost, consultPort, secret string, retryMax, retryTimeout int64, tracer stdopentracing.Tracer, zipkinTracer *opzipkin.Tracer, port string, certFile string, keyFile string, logger log.Logger, errs chan error) {
+	client := newConsulClient(consulHost, consultPort, logger)
 	p := fmt.Sprintf(":%s", port)
 	if certFile != "" || keyFile != "" {
-		level.Info(logger).Log("serviceName", serviceName, "protocol", "HTTP", "exposed", port, "certFile", certFile, "keyFile", keyFile)
-		errs <- http.ListenAndServeTLS(p, certFile, keyFile, gatewaytransport.MakeHandler(ctx, client, retryMax, retryTimeout, tracer, zipkinTracer, logger))
+		level.Info(logger).Log("protocol", "HTTP", "exposed", port, "certFile", certFile, "keyFile", keyFile)
+		errs <- http.ListenAndServeTLS(p, certFile, keyFile, gatewaytransport.MakeHandler(client, secret, retryMax, retryTimeout, tracer, zipkinTracer, logger))
 	} else {
-		level.Info(logger).Log("serviceName", serviceName, "protocol", "HTTP", "exposed", port)
-		errs <- http.ListenAndServe(p, gatewaytransport.MakeHandler(ctx, client, retryMax, retryTimeout, tracer, zipkinTracer, logger))
+		level.Info(logger).Log("protocol", "HTTP", "exposed", port)
+		errs <- http.ListenAndServe(p, gatewaytransport.MakeHandler(client, secret, retryMax, retryTimeout, tracer, zipkinTracer, logger))
 	}
 }
 
-func startGRPCServer(consultAddress string, tracer stdopentracing.Tracer, zipkinTracer *opzipkin.Tracer, port string, certFile string, keyFile string, logger log.Logger, errs chan error) {
+func startGRPCServer(consulHost, consultPort string, tracer stdopentracing.Tracer, zipkinTracer *opzipkin.Tracer, port string, certFile string, keyFile string, logger log.Logger, errs chan error) {
+	consultAddress := fmt.Sprintf("%s:%s", consulHost, consultPort)
+
 	p := fmt.Sprintf(":%s", port)
 	listener, err := net.Listen("tcp", p)
 	if err != nil {
