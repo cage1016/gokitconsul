@@ -239,34 +239,37 @@ func decodeHTTPConcatResponse(_ context.Context, r *http.Response) (interface{},
 func httpEncodeError(_ context.Context, err error, w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 
+	var code int
+	var errString string
 	if lberr, ok := err.(lb.RetryError); ok {
-		st, _ := status.FromError(lberr.Final)
-		w.WriteHeader(HTTPStatusFromCode(st.Code()))
-		json.NewEncoder(w).Encode(errorWrapper{Error: st.Message()})
-	} else {
-		st, ok := status.FromError(err)
-		if ok {
-			w.WriteHeader(HTTPStatusFromCode(st.Code()))
-			json.NewEncoder(w).Encode(errorWrapper{Error: st.Message()})
-		} else {
-			switch err {
-			case io.ErrUnexpectedEOF:
-				w.WriteHeader(http.StatusBadRequest)
-			case io.EOF:
-				w.WriteHeader(http.StatusBadRequest)
-			case service.ErrTwoZeroes, service.ErrMaxSizeExceeded, service.ErrIntOverflow:
-				w.WriteHeader(http.StatusBadRequest)
-			default:
-				switch err.(type) {
-				case *json.SyntaxError:
-					w.WriteHeader(http.StatusBadRequest)
-				case *json.UnmarshalTypeError:
-					w.WriteHeader(http.StatusBadRequest)
-				default:
-					w.WriteHeader(http.StatusInternalServerError)
-				}
-			}
-			json.NewEncoder(w).Encode(errorWrapper{Error: err.Error()})
-		}
+		err = lberr.Final
 	}
+
+	st, ok := status.FromError(err)
+	if ok {
+		code = HTTPStatusFromCode(st.Code())
+		errString = st.Message()
+	} else {
+		switch err {
+		case io.ErrUnexpectedEOF:
+			code = http.StatusBadRequest
+		case io.EOF:
+			code = http.StatusBadRequest
+		case service.ErrTwoZeroes, service.ErrMaxSizeExceeded, service.ErrIntOverflow:
+			code = http.StatusBadRequest
+		default:
+			switch err.(type) {
+			case *json.SyntaxError:
+				code = http.StatusBadRequest
+			case *json.UnmarshalTypeError:
+				code = http.StatusBadRequest
+			default:
+				code = http.StatusInternalServerError
+			}
+		}
+		errString = err.Error()
+	}
+
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(errorWrapper{Error: errString})
 }
