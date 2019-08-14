@@ -1,5 +1,5 @@
 # Base build image
-FROM golang:1.11-alpine AS build_base
+FROM golang:1.11.5-alpine AS build_base
 ARG SVC_NAME
 
 # Install some dependencies needed to build the project
@@ -21,12 +21,11 @@ COPY go.sum .
 RUN go mod download
 
 ENV GOLANG_PROTOBUF_VERSION=1.3.0
-RUN GO111MODULE=on go get github.com/golang/protobuf/protoc-gen-go@v${GOLANG_PROTOBUF_VERSION}
+RUN GO111MODULE=on && go get github.com/golang/protobuf/protoc-gen-go@v${GOLANG_PROTOBUF_VERSION}
 RUN cp /go/bin/protoc-gen-go /usr/local/bin/
 
 ENV GOGO_PROTOBUF_VERSION=1.2.1
-RUN GO111MODULE=on go get \
-  github.com/gogo/protobuf/protoc-gen-gofast@v${GOGO_PROTOBUF_VERSION}
+RUN GO111MODULE=on && go get github.com/gogo/protobuf/protoc-gen-gofast@v${GOGO_PROTOBUF_VERSION}
 RUN cp /go/bin/protoc-gen-gofast /usr/local/bin/
 
 RUN echo $SVC_NAME

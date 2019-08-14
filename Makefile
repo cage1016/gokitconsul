@@ -1,8 +1,11 @@
 BUILD_DIR = build
 SERVICES = gateway addsvc foosvc
-DOCKERS = $(addprefix docker_,$(SERVICES))
+DOCKERS_CLEANBUILD = $(addprefix docker_prod_,$(SERVICES))
 DOCKERS_DEV = $(addprefix docker_dev_,$(SERVICES))
-REBUILD = $(addprefix rebuild_,$(SERVICES))
+DOCKERS_DEBUG = $(addprefix docker_debug_,$(SERVICES))
+STAGES = dev debug prod
+COMPOSEUP = $(addsuffix -compose-up,$(STAGES))
+COMPOSEDOWN = $(addsuffix -compose-down,$(STAGES))
 CGO_ENABLED ?= 0
 GOOS ?= linux
 # GOOS ?= darwin
@@ -11,17 +14,25 @@ define compile_service
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) GOARM=$(GOARM) go build -ldflags "-s -w" -o ${BUILD_DIR}/gokitconsul-$(1) cmd/$(1)/main.go
 endef
 
-define make_docker
-	docker build --no-cache --build-arg SVC_NAME=$(subst docker_,,$(1)) --tag=cage1016/gokitconsul-$(subst docker_,,$(1)) -f deployments/docker/Dockerfile .
+define compile_debug_service
+	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) GOARM=$(GOARM) go build -gcflags "all=-N -l" -o ${BUILD_DIR}/gokitconsul-$(1) cmd/$(1)/main.go
+endef
+
+define make_docker_cleanbuild
+	docker build --no-cache --build-arg SVC_NAME=$(subst docker_prod_,,$(1)) --tag=cage1016/gokitconsul-$(subst docker_prod_,,$(1)) -f deployments/docker/Dockerfile .
 endef
 
 define make_docker_dev
 	docker build --build-arg SVC_NAME=$(subst docker_dev_,,$(1)) --tag=cage1016/gokitconsul-$(subst docker_dev_,,$(1)) -f deployments/docker/Dockerfile.dev ./build
 endef
 
+define make_docker_debug
+	docker build --build-arg SVC_NAME=$(subst docker_debug_,,$(1)) --tag=cage1016/gokitconsul-debug-$(subst docker_debug_,,$(1)) -f deployments/docker/Dockerfile.debug ./build
+endef
+
 all: $(SERVICES)
 
-.PHONY: all $(SERVICES) dockers dockers_dev
+.PHONY: all $(SERVICES) dockers dockers_dev dockers_debug
 
 cleandocker: cleanghost
 	# Stop all containers (if running)
@@ -56,51 +67,72 @@ proto:
 		fi \
 	done
 
+# Regenerates OPA data from rego files
+HAVE_GO_BINDATA := $(shell command -v go-bindata 2> /dev/null)
+generate:
+ifndef HAVE_GO_BINDATA
+	@echo "requires 'go-bindata' (go get -u github.com/kevinburke/go-bindata/go-bindata)"
+	@exit 1 # fail
+else
+	go generate ./...
+endif
+
 $(SERVICES):
 	$(call compile_service,$(@))
 
-$(DOCKERS):
-	$(call make_docker,$(@))
+$(DOCKERS_CLEANBUILD):
+	$(call make_docker_cleanbuild,$(@))
+
+$(DOCKERS_DEV):
+	$(call compile_service,$(subst docker_dev_,,$(@)))
+	$(call make_docker_dev,$(subst docker_dev_,,$(@)))
+
+$(DOCKERS_DEBUG):
+	$(call compile_debug_service,$(subst docker_debug_,,$(@)))
+	$(call make_docker_debug,$(subst docker_debug_,,$(@)))
 
 services: $(SERVICES)
 
-dockers: $(DOCKERS)
+dockers: $(DOCKERS_CLEANBUILD)
 
-rebuilds: $(REBUILD)
-
-$(REBUILD):
-	$(call compile_service,$(subst rebuild_,,$(@)))
-	$(call make_docker_dev,$(subst rebuild_,,$(@)))
-
-$(DOCKERS_DEV):
-	$(call make_docker_dev,$(@))
+dockers_debug: $(DOCKERS_DEBUG)
 
 dockers_dev: $(DOCKERS_DEV)
 
+define make_docker_compose_up
+	@if [ $(1) == prod ]; then \
+		echo "docker-compose -f deployments/docker/docker-compose.yaml up -d"; \
+		docker-compose -f deployments/docker/docker-compose.yaml up -d; \
+	else \
+		echo "docker-compose -f deployments/docker/docker-compose-$(1).yaml up -d"; \
+		docker-compose -f deployments/docker/docker-compose-$(1).yaml up -d; \
+	fi
+endef
+
+define make_docker_compose_down
+	@if [ $(1) == prod ]; then \
+		echo "docker-compose -f deployments/docker/docker-compose.yaml down"; \
+		docker-compose -f deployments/docker/docker-compose.yaml down; \
+	else \
+		echo "docker-compose -f deployments/docker/docker-compose-$(1).yaml down"; \
+		docker-compose -f deployments/docker/docker-compose-$(1).yaml down; \
+	fi
+endef
+
+$(COMPOSEUP):
+	$(call make_docker_compose_up,$(subst -compose-up,,$(@)))
+
+$(COMPOSEDOWN):
+	$(call make_docker_compose_down,$(subst -compose-down,,$(@)))
+
 u:
-	docker-compose -f deployments/docker/docker-compose.yaml up -d
+	make dev-compose-up
+#	make debug-compose-up
+#	make prod-compose-up
 
 d:
-	docker-compose -f deployments/docker/docker-compose.yaml down
-
-log:
-	docker logs -f gokitconsul-arithmetic
+	make dev-compose-down
+#	make debug-compose-down
+#	make prod-compose-down
 
 restart: d u
-
-goaddsvc:
-	QS_ADDSVC_LOG_LEVEL=info \
-	QS_ADDSVC_HTTP_PORT=8020 \
-	QS_ADDSVC_GRPC_PORT=8021 \
-	QS_CONSULT_HOST=0.0.0.0 \
-	QS_CONSULT_PORT=8500 \
-	go run cmd/addsvc/main.go
-
-gogateway:
-	QS_GATEWAY_LOG_LEVEL=info \
-	QS_GATEWAY_HTTP_PORT=9000 \
-	QS_GATEWAY_CONSULT_HOST=0.0.0.0 \
-	QS_GATEWAY_CONSULT_PORT=8500 \
-	QS_GATEWAY_SERVER_CERT=./deployments/docker/ssl/localhost+3.pem \
-	QS_GATEWAY_SERVER_KEY=./deployments/docker/ssl/localhost+3-key.pem \
-	go run cmd/gateway/main.go

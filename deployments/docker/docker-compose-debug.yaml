@@ -1,0 +1,85 @@
+version: "3"
+
+networks:
+  net:
+    driver: bridge
+
+services:
+  consul:
+    image: consul:1.5.1
+    container_name: gokitconsul-consul
+    ports:
+      - 8400:8400
+      - 8500:8500
+      - 8600:8600
+    networks:
+      - net
+
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: gokitconsul-zipkin
+    ports:
+      - 9411:9411
+    networks:
+      - net
+
+  foosvc:
+    image: cage1016/gokitconsul-foosvc:latest
+    container_name: gokitconsul-foosvc
+    environment:
+      QS_ADDSVC_LOG_LEVEL: info
+      QS_FOOSVC_HTTP_PORT: 7020
+      QS_FOOSVC_GRPC_PORT: 7021
+      QS_CONSULT_HOST: consul
+      QS_CONSULT_PORT: 8500
+      QS_ADDSVC_URL: addsvc:8021
+      QS_ZIPKIN_V2_URL: http://zipkin:9411/api/v2/spans
+    depends_on:
+      - consul
+    networks:
+      - net
+
+  addsvc:
+    image: cage1016/gokitconsul-addsvc:latest
+    container_name: gokitconsul-addsvc
+    environment:
+      QS_ADDSVC_LOG_LEVEL: info
+      QS_ADDSVC_HTTP_PORT: 8020
+      QS_ADDSVC_GRPC_PORT: 8021
+      QS_CONSULT_HOST: consul
+      QS_CONSULT_PORT: 8500
+      QS_ZIPKIN_V2_URL: http://zipkin:9411/api/v2/spans
+    depends_on:
+      - consul
+    networks:
+      - net
+
+  gateway:
+#    image: cage1016/gokitconsul-gateway:latest
+    image: cage1016/gokitconsul-debug-gateway:latest
+    container_name: gokitconsul-gateway-debug
+    security_opt:
+      - apparmor:unconfined
+    cap_add:
+      - SYS_PTRACE
+    environment:
+      QS_GATEWAY_LOG_LEVEL: info
+      QS_GATEWAY_HTTP_PORT: 8000
+      QS_GATEWAY_GRPC_PORT: 8001
+      QS_GATEWAY_SERVER_CERT: /ssl/localhost+3.pem
+      QS_GATEWAY_SERVER_KEY: /ssl/localhost+3-key.pem
+      QS_GATEWAY_RETRY_MAX: 3
+      QS_GATEWAY_RETRY_TIMEOUT: 500
+      QS_CONSULT_HOST: consul
+      QS_CONSULT_PORT: 8500
+      QS_ZIPKIN_V2_URL: http://zipkin:9411/api/v2/spans
+    depends_on:
+      - consul
+    ports:
+      - 8000:8000
+      - 8001:8001
+      - 2345:2345
+    volumes:
+      - ./ssl:/ssl
+    networks:
+      - net

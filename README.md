@@ -32,7 +32,7 @@
 
 ```sh
 # build docker image form bindary
-make rebuilds
+make dockers_dev
 
 # clear build (options)
 make dockers
