@@ -18,6 +18,7 @@ import (
 	"github.com/go-kit/kit/sd/consul"
 	consulsd "github.com/go-kit/kit/sd/consul"
 	kitgrpc "github.com/go-kit/kit/transport/grpc"
+	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 	"github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
 	"github.com/hashicorp/consul/api"
@@ -27,6 +28,7 @@ import (
 	zipkinot "github.com/openzipkin-contrib/zipkin-go-opentracing"
 	"github.com/openzipkin/zipkin-go"
 	opzipkin "github.com/openzipkin/zipkin-go"
+	zipkingrpc "github.com/openzipkin/zipkin-go/middleware/grpc"
 	zipkinhttp "github.com/openzipkin/zipkin-go/reporter/http"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -260,22 +262,27 @@ func startGRPCServer(consultAddress string, tracer stdopentracing.Tracer, zipkin
 		if strings.HasPrefix(fullMethodName, "/com.example.internal.") {
 			return nil, nil, grpc.Errorf(codes.Unimplemented, "Unknown method")
 		}
+
 		md, ok := metadata.FromIncomingContext(ctx)
 		// Copy the inbound metadata explicitly.
 		outCtx, _ := context.WithCancel(ctx)
 		outCtx = metadata.NewOutgoingContext(outCtx, md.Copy())
+
 		if ok {
 			conn, err := grpc.DialContext(
 				ctx,
 				"",
 				grpc.WithInsecure(),
-				grpc.WithUnaryInterceptor(otgrpc.OpenTracingClientInterceptor(tracer)),
+				grpc.WithStatsHandler(zipkingrpc.NewClientHandler(zipkinTracer)),
 				grpc.WithUnaryInterceptor(
-					grpc_retry.UnaryClientInterceptor(
-						grpc_retry.WithBackoff(grpc_retry.BackoffLinear(time.Duration(1)*time.Millisecond)),
-						grpc_retry.WithMax(3),
-						grpc_retry.WithPerRetryTimeout(time.Duration(5)*time.Millisecond),
-						grpc_retry.WithCodes(codes.ResourceExhausted, codes.Unavailable, codes.DeadlineExceeded),
+					grpc_middleware.ChainUnaryClient(
+						otgrpc.OpenTracingClientInterceptor(tracer),
+						grpc_retry.UnaryClientInterceptor(
+							grpc_retry.WithBackoff(grpc_retry.BackoffLinear(time.Duration(1)*time.Millisecond)),
+							grpc_retry.WithMax(3),
+							grpc_retry.WithPerRetryTimeout(time.Duration(5)*time.Millisecond),
+							grpc_retry.WithCodes(codes.ResourceExhausted, codes.Unavailable, codes.DeadlineExceeded),
+						),
 					),
 				),
 				grpc.WithDefaultCallOptions(grpc.CallCustomCodec(proxy.Codec()), grpc.FailFast(false)),
@@ -299,6 +306,7 @@ func startGRPCServer(consultAddress string, tracer stdopentracing.Tracer, zipkin
 			grpc.CustomCodec(proxy.Codec()),
 			grpc.UnknownServiceHandler(proxy.TransparentHandler(director)),
 			grpc.Creds(creds),
+			grpc.StatsHandler(zipkingrpc.NewServerHandler(zipkinTracer)),
 		)
 	} else {
 		level.Info(logger).Log("GRPC", "proxy", "exposed", port)
@@ -306,6 +314,7 @@ func startGRPCServer(consultAddress string, tracer stdopentracing.Tracer, zipkin
 			grpc.CustomCodec(proxy.Codec()),
 			grpc.UnknownServiceHandler(proxy.TransparentHandler(director)),
 			grpc.UnaryInterceptor(kitgrpc.Interceptor),
+			grpc.StatsHandler(zipkingrpc.NewServerHandler(zipkinTracer)),
 		)
 	}
 	errs <- server.Serve(listener)
